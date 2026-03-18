@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="description" content="Track faculty availability and real-time GPS location on campus." />
+  <title>Faculty Availability &amp; Location Tracker</title>
+
+  <!-- Inline SVG favicon — eliminates the 404 for favicon.ico -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Ccircle cx='16' cy='13' r='5' fill='white'/%3E%3Cpath d='M16 18 C10 18 8 23 16 26 C24 23 22 18 16 18Z' fill='white'/%3E%3C/svg%3E" />
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json" />
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Leaflet CSS (local copy — avoids Edge Tracking Prevention on IP-based URLs) -->
+  <link rel="stylesheet" href="lib/leaflet.css" />
+
+  <!-- Leaflet JS (local copy) -->
+  <script src="lib/leaflet.js"></script>
+
+  <!-- App Logic (ES Module) -->
+  <script type="module" src="script.js"></script>
+
+  <!-- Safety net: if script.js fails to load (e.g. no internet for esm.sh),
+       force the splash away after 6s so the page isn't stuck forever. -->
+  <script>
+    window._splashTimer = setTimeout(function () {
+      var s = document.getElementById('splash-screen');
+      if (s) {
+        s.style.transition = 'opacity 0.4s';
+        s.style.opacity = '0';
+        setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 420);
+        // Also show login if dashboard is still hidden
+        var login = document.getElementById('login-screen');
+        var dash  = document.getElementById('dashboard');
+        if (login && login.classList.contains('hidden') && dash && dash.classList.contains('hidden')) {
+          login.classList.remove('hidden');
+          var errBanner = document.createElement('div');
+          errBanner.style.cssText = 'background:#fef2f2;color:#b91c1c;padding:10px 16px;border-radius:8px;margin-bottom:12px;font-size:13px;text-align:center;';
+          errBanner.innerHTML = '&#x26A0;&#xFE0F; Could not connect to app services. Check your internet connection and reload.';
+          var card = document.querySelector('.auth-card');
+          if (card) card.insertBefore(errBanner, card.firstChild);
+        }
+      }
+    }, 6000);
+  </script>
+</head>
+
+<body>
+
+  <!-- ====================================================
+       SPLASH SCREEN
+  ===================================================== -->
+  <div id="splash-screen">
+    <div class="splash-inner">
+      <div class="splash-icon">📍</div>
+      <h2>Faculty Tracker</h2>
+      <p>Campus Location &amp; Availability System</p>
+      <div class="spinner"></div>
+    </div>
+  </div>
+
+  <!-- ====================================================
+       MODULE 1 — USER AUTHENTICATION
+  ===================================================== -->
+  <div id="login-screen" class="page hidden">
+    <div class="auth-card">
+
+      <!-- Brand Header -->
+      <div class="auth-brand">
+        <span class="brand-icon">🏫</span>
+        <h1>Faculty Tracker</h1>
+        <p class="brand-sub">Campus Location &amp; Availability System</p>
+      </div>
+
+      <!-- Tab Switcher -->
+      <div class="auth-tabs">
+        <button class="tab-btn active" data-tab="login">Login</button>
+        <button class="tab-btn" data-tab="signup">Sign Up</button>
+      </div>
+
+      <!-- LOGIN FORM -->
+      <form id="login-form" class="auth-form active-form">
+        <div class="input-group">
+          <label for="login-email">Email Address</label>
+          <input type="email" id="login-email" placeholder="you@college.edu" autocomplete="email" required />
+        </div>
+        <div class="input-group">
+          <label for="login-password">Password</label>
+          <div class="password-wrap">
+            <input type="password" id="login-password" placeholder="Enter your password"
+              autocomplete="current-password" required />
+            <span class="toggle-pw" data-target="login-password">👁</span>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-full" id="login-btn">
+          <span class="btn-text">Login</span>
+          <span class="btn-loader hidden"></span>
+        </button>
+        <p id="login-error" class="form-msg error hidden"></p>
+      </form>
+
+      <!-- SIGN UP FORM -->
+      <form id="signup-form" class="auth-form hidden">
+        <div class="input-group">
+          <label for="signup-name">Full Name</label>
+          <input type="text" id="signup-name" placeholder="Dr. / Prof. / Your Name"
+            autocomplete="name" required />
+        </div>
+        <div class="input-group">
+          <label for="signup-dept">Department</label>
+          <input type="text" id="signup-dept" placeholder="e.g. Computer Science"
+            autocomplete="organization" />
+        </div>
+        <div class="input-group">
+          <label for="signup-email">Email Address</label>
+          <input type="email" id="signup-email" placeholder="you@college.edu"
+            autocomplete="email" required />
+        </div>
+        <div class="input-group">
+          <label for="signup-role">Role</label>
+          <select id="signup-role">
+            <option value="student">🎓 Student</option>
+            <option value="faculty">👨‍🏫 Faculty</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label for="signup-password">Password</label>
+          <div class="password-wrap">
+            <input type="password" id="signup-password" placeholder="Min. 6 characters"
+              autocomplete="new-password" required minlength="6" />
+            <span class="toggle-pw" data-target="signup-password">👁</span>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-full" id="signup-btn">
+          <span class="btn-text">Create Account</span>
+          <span class="btn-loader hidden"></span>
+        </button>
+        <p id="signup-error"   class="form-msg error   hidden"></p>
+        <p id="signup-success" class="form-msg success hidden"></p>
+      </form>
+
+    </div><!-- /auth-card -->
+  </div><!-- /login-screen -->
+
+  <!-- ====================================================
+       DASHBOARD  (Modules 2 · 3 · 4)
+  ===================================================== -->
+  <div id="dashboard" class="page hidden">
+
+    <!-- ── Top Navigation Bar ── -->
+    <nav class="topbar">
+      <div class="topbar-left">
+        <span class="topbar-icon">📍</span>
+        <span class="topbar-title">Faculty Tracker</span>
+      </div>
+      <div class="topbar-center">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">Connecting…</span>
+      </div>
+      <div class="topbar-right">
+        <span id="user-badge" class="user-badge"></span>
+        <button id="logout-btn" class="btn btn-outline btn-sm">⏻ Logout</button>
+      </div>
+    </nav>
+
+    <!-- ── Main Two-Column Layout ── -->
+    <div class="main-layout">
+
+      <!-- ===== LEFT SIDEBAR ===== -->
+      <aside class="sidebar" id="sidebar">
+
+        <!-- Quick Stats -->
+        <div class="stats-row">
+          <div class="stat-card green">
+            <span class="stat-num" id="count-available">0</span>
+            <span class="stat-label">Available</span>
+          </div>
+          <div class="stat-card red">
+            <span class="stat-num" id="count-busy">0</span>
+            <span class="stat-label">Busy</span>
+          </div>
+          <div class="stat-card grey">
+            <span class="stat-num" id="count-offline">0</span>
+            <span class="stat-label">Offline</span>
+          </div>
+        </div>
+
+        <!-- Search -->
+        <div class="search-box">
+          <input type="text" id="faculty-search" placeholder="🔍  Search faculty by name…" />
+        </div>
+
+        <!-- Faculty List Header -->
+        <div class="faculty-list-header">
+          <span>Faculty Directory</span>
+          <button class="refresh-btn" id="refresh-btn" title="Refresh list">⟳</button>
+        </div>
+
+        <!-- MODULE 3 support: Faculty Directory List -->
+        <ul id="faculty-list" class="faculty-list">
+          <li class="list-placeholder">Loading faculty…</li>
+        </ul>
+
+        <!-- MODULE 2 — FACULTY TRACKING PANEL (faculty only) -->
+        <div id="tracking-panel" class="tracking-panel hidden">
+          <h3 class="panel-title">📡 Location Sharing</h3>
+
+          <!-- HTTPS warning — shown when page is served over plain HTTP from an IP -->
+          <div id="https-warning" class="https-warning hidden">
+            <strong>⚠️ GPS needs HTTPS or localhost</strong>
+            <p>Your browser blocks GPS on plain <code>http://</code> from an IP address.</p>
+            <p><strong>Fix:</strong> On this PC, open the app using <code>localhost</code> instead:</p>
+            <a id="localhost-link" class="localhost-url" href="#" target="_blank">http://localhost:5500/faculty-tracker/</a>
+            <p style="margin-top:6px;font-size:11px;color:#92400e">
+              Students on other devices can still use the IP address — they only <em>view</em> the map, they don't need GPS.
+            </p>
+          </div>
+
+          <div class="input-group compact">
+            <label for="availability-select">My Availability</label>
+            <select id="availability-select">
+              <option value="available">🟢 Available</option>
+              <option value="busy">🔴 Busy</option>
+              <option value="offline">⚫ Offline</option>
+            </select>
+          </div>
+          <button id="track-btn" class="btn btn-green btn-full">
+            ▶ Start Sharing Location
+          </button>
+          <p id="gps-status" class="gps-status"></p>
+          <div id="accuracy-bar" class="accuracy-bar hidden">
+            <span class="acc-label">GPS Accuracy</span>
+            <span id="accuracy-val" class="acc-val">–</span>
+          </div>
+        </div>
+
+        <!-- PROFILE SETUP PANEL (shown when profile/role is missing) -->
+        <div id="profile-setup-panel" class="profile-setup-panel hidden">
+          <p id="setup-msg" class="setup-msg">⚠️ Your profile wasn't found.<br>Set your role to continue.</p>
+          <div class="input-group compact">
+            <label for="setup-name">Your Name</label>
+            <input type="text" id="setup-name" placeholder="Dr. / Prof. / Your Name" />
+          </div>
+          <div class="input-group compact">
+            <label for="setup-dept">Department</label>
+            <input type="text" id="setup-dept" placeholder="e.g. Computer Science" />
+          </div>
+          <div class="input-group compact">
+            <label for="setup-role">I am a&hellip;</label>
+            <select id="setup-role">
+              <option value="student">🎓 Student</option>
+              <option value="faculty">👨‍🏫 Faculty</option>
+            </select>
+          </div>
+          <button id="setup-save-btn" class="btn btn-primary btn-full">
+            <span class="btn-text">Save Profile</span>
+            <span class="btn-loader hidden"></span>
+          </button>
+        </div>
+
+      </aside><!-- /sidebar -->
+
+      <!-- ===== MAP AREA (Module 3 — Campus Map Visualization) ===== -->
+      <div class="map-container">
+
+        <!-- MODULE 4 — Real-time live badge -->
+        <div class="realtime-badge" id="realtime-badge">
+          <span class="pulse-ring"></span>
+          <span id="realtime-label">LIVE</span>
+        </div>
+
+        <!-- Fit-all markers button -->
+        <button class="map-ctrl-btn" id="fit-btn" title="Zoom to show all faculty">⊙</button>
+
+        <!-- Track-me (re-center on own position) button — only visible when tracking -->
+        <button class="map-ctrl-btn hidden" id="track-me-btn" title="Center on my location">📍</button>
+
+        <!-- Layer switcher -->
+        <div class="layer-switcher" id="layer-switcher">
+          <button class="layer-btn active" data-layer="street" title="Street map">🗺 Street</button>
+          <button class="layer-btn" data-layer="satellite" title="Satellite imagery">🛰 Satellite</button>
+        </div>
+
+        <!-- Leaflet map canvas -->
+        <div id="map"></div>
+
+        <!-- Map Legend -->
+        <div class="map-legend">
+          <span class="legend-item"><span class="dot green"></span> Available</span>
+          <span class="legend-item"><span class="dot red"></span> Busy</span>
+          <span class="legend-item"><span class="dot grey"></span> Offline</span>
+          <span class="legend-item"><span class="dot blue"></span> You</span>
+        </div>
+
+        <!-- Last Updated timestamp -->
+        <div class="last-updated" id="last-updated">Waiting for data…</div>
+      </div><!-- /map-container -->
+
+    </div><!-- /main-layout -->
+  </div><!-- /dashboard -->
+
+  <!-- ====================================================
+       FACULTY DETAIL MODAL
+  ===================================================== -->
+  <div id="faculty-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-name">
+    <div class="modal-backdrop" id="modal-backdrop"></div>
+    <div class="modal-card">
+      <button class="modal-close" id="modal-close" aria-label="Close">✕</button>
+      <div class="modal-avatar" id="modal-avatar">👨‍🏫</div>
+      <h2 id="modal-name">–</h2>
+      <span id="modal-status-badge" class="modal-status-badge">–</span>
+      <div class="modal-info">
+        <div class="info-row">
+          <span class="info-label">Department</span>
+          <span id="modal-dept">–</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Last Updated</span>
+          <span id="modal-time">–</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">GPS Coordinates</span>
+          <span id="modal-coords">–</span>
+        </div>
+      </div>
+      <button id="modal-navigate-btn" class="btn btn-primary btn-full">
+        🗺 Center on Map
+      </button>
+    </div>
+  </div>
+
+  <!-- ====================================================
+       TOAST NOTIFICATIONS
+  ===================================================== -->
+  <div id="toast-container"></div>
+
+  <!-- Service Worker — use relative path so it works under any subfolder -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        // Relative path works whether served from root or a subfolder (e.g. Live Server)
+        navigator.serviceWorker.register('./sw.js')
+          .then(r => console.log('[SW] Registered:', r.scope))
+          .catch(e => console.warn('[SW] Failed:', e));
+      });
+    }
+  </script>
+
+</body>
+</html>

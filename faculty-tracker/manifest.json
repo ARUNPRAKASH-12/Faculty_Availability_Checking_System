@@ -1,0 +1,35 @@
+{
+  "name": "Faculty Availability & Location Tracker",
+  "short_name": "FacultyTracker",
+  "description": "Real-time GPS faculty availability and campus location tracking system for students and staff.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f1f5f9",
+  "theme_color": "#4f46e5",
+  "categories": ["education", "utilities"],
+  "shortcuts": [
+    {
+      "name": "Campus Map",
+      "short_name": "Map",
+      "description": "Open the live campus map",
+      "url": "./index.html",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

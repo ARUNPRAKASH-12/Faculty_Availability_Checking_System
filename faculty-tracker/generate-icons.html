@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Icon Generator – Faculty Tracker</title>
+<style>
+  body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center;
+         gap: 20px; padding: 40px; background: #f1f5f9; }
+  h2 { color: #4f46e5; }
+  canvas { border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,.2); }
+  button { padding: 12px 28px; background: #4f46e5; color: #fff; border: none;
+           border-radius: 8px; font-size: 16px; cursor: pointer; }
+  button:hover { background: #4338ca; }
+  p { color: #64748b; text-align: center; max-width: 480px; }
+</style>
+</head>
+<body>
+<h2>Faculty Tracker – Icon Generator</h2>
+<p>Click the buttons below to download the two PWA icons.
+   Save them inside the <strong>icons/</strong> folder inside your
+   <strong>faculty-tracker</strong> project folder.</p>
+
+<canvas id="c192" width="192" height="192"></canvas>
+<button onclick="download(192)">Download icon-192.png</button>
+
+<canvas id="c512" width="512" height="512"></canvas>
+<button onclick="download(512)">Download icon-512.png</button>
+
+<script>
+function drawIcon(size) {
+  const canvas = document.getElementById('c' + size);
+  const ctx = canvas.getContext('2d');
+  const s = size;
+
+  // Background gradient
+  const bg = ctx.createLinearGradient(0, 0, s, s);
+  bg.addColorStop(0, '#4f46e5');
+  bg.addColorStop(1, '#7c3aed');
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, s, s, s * 0.18);
+  ctx.fill();
+
+  // Map pin icon
+  const cx = s / 2, cy = s * 0.44, r = s * 0.22;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, Math.PI, 0);
+  ctx.lineTo(cx + r, cy);
+  const tipX = cx, tipY = cy + r * 1.7;
+  ctx.quadraticCurveTo(cx + r, cy + r * 0.9, tipX, tipY);
+  ctx.quadraticCurveTo(cx - r, cy + r * 0.9, cx - r, cy);
+  ctx.closePath();
+  ctx.fill();
+
+  // Inner circle (hole)
+  ctx.fillStyle = '#4f46e5';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.42, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Letters "FT" below pin
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `bold ${s * 0.13}px Arial, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Faculty', cx, cy + r * 2.5);
+  ctx.font = `${s * 0.09}px Arial, sans-serif`;
+  ctx.fillText('Tracker', cx, cy + r * 3.2);
+
+  return canvas;
+}
+
+function download(size) {
+  const canvas = drawIcon(size);
+  const link = document.createElement('a');
+  link.download = 'icon-' + size + '.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+}
+
+// Draw on page load
+drawIcon(192);
+drawIcon(512);
+</script>
+</body>
+</html>

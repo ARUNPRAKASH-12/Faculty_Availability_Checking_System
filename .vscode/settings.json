@@ -1,0 +1,10 @@
+{
+  "liveServer.settings.host": "10.72.26.224",
+  "liveServer.settings.port": 5500,
+  "liveServer.settings.NoBrowser": false,
+  "liveServer.settings.ignoredFiles": [
+    ".vscode/**",
+    "**/*.scss",
+    "**/*.sass"
+  ]
+}
