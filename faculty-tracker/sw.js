@@ -6,7 +6,7 @@
 //    · Everything else → Stale-while-revalidate
 // ====================================================================
 
-const CACHE_VERSION = 'v8';
+const CACHE_VERSION = 'v9';
 const CACHE_NAME    = `faculty-tracker-${CACHE_VERSION}`;
 
 const STATIC_SHELL = [

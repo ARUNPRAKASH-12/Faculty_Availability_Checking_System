@@ -199,6 +199,19 @@
           <input type="text" id="faculty-search" placeholder="🔍  Search faculty by name…" />
         </div>
 
+        <!-- Directory Filters -->
+        <div class="filter-row">
+          <select id="dept-filter" class="filter-select" aria-label="Filter by department">
+            <option value="all">All Departments</option>
+          </select>
+          <select id="status-filter" class="filter-select" aria-label="Filter by status">
+            <option value="all">All Status</option>
+            <option value="available">Available</option>
+            <option value="busy">Busy</option>
+            <option value="offline">Offline</option>
+          </select>
+        </div>
+
         <!-- Faculty List Header -->
         <div class="faculty-list-header">
           <span>Faculty Directory</span>
@@ -308,9 +321,14 @@
           <span id="modal-coords">–</span>
         </div>
       </div>
-      <button id="modal-navigate-btn" class="btn btn-primary btn-full">
-        🗺 Center on Map
-      </button>
+      <div class="modal-actions">
+        <button id="modal-navigate-btn" class="btn btn-primary btn-full">
+          🗺 Center on Map
+        </button>
+        <button id="modal-directions-btn" class="btn btn-outline btn-full">
+          🧭 Get Directions
+        </button>
+      </div>
     </div>
   </div>
 

@@ -367,6 +367,30 @@ body {
   transform: translateY(-50%); pointer-events: none; font-size: 14px;
 }
 
+.filter-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.filter-select {
+  width: 100%;
+  border: 1px solid rgba(148,163,184,0.35);
+  background: rgba(255,255,255,0.95);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  appearance: none;
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+
 .faculty-list-header {
   display: flex; justify-content: space-between;
   align-items: center; font-size: 11px; font-weight: 700;
@@ -700,6 +724,12 @@ body {
 
 .modal-info { margin-bottom: 20px; text-align: left; }
 
+.modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .info-row {
   display: flex; justify-content: space-between;
   align-items: flex-start; padding: 10px 0;
@@ -818,6 +848,8 @@ body {
 }
 
 @media (max-width: 480px) {
+  .filter-row { grid-template-columns: 1fr; gap: 6px; }
+
   .auth-card { padding: 20px 16px; }
   .auth-brand h1 { font-size: 20px; }
   .brand-icon { font-size: 40px; }

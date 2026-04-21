@@ -389,8 +389,8 @@ function flashBadge() {
 }
 
 /** Update the LIVE badge label to show online faculty count */
-function updateBadgeCount() {
-  const n = Object.values(facultyStore).filter(r => r.availability_status !== 'offline').length;
+function updateBadgeCount(rows = getFilteredRows()) {
+  const n = rows.filter(r => r.availability_status !== 'offline').length;
   const lbl = $('realtime-label');
   if (lbl) lbl.textContent = n > 0 ? `LIVE · ${n} online` : 'LIVE';
 }
@@ -413,7 +413,7 @@ function startTimeCounter() {
 function fitAllMarkers() {
   if (!map) return;
   const points = [];
-  Object.values(facultyStore).forEach(r => {
+  getFilteredRows().forEach(r => {
     if (hasValidCoords(r.latitude, r.longitude)) {
       points.push([parseFloat(r.latitude), parseFloat(r.longitude)]);
     }
@@ -475,9 +475,7 @@ function upsertMarker(row, opts = {}) {
     lastUpdateTime = Date.now();
     $('last-updated').textContent = 'Updated just now';
     flashBadge();
-    updateBadgeCount();
-    updateStats();
-    updateFacultyList();
+    refreshFilteredViews();
   }
 
   // Flash the corresponding sidebar list item briefly
@@ -492,12 +490,11 @@ function upsertMarker(row, opts = {}) {
 
 /** Remove marker when a faculty row is deleted */
 function removeMarker(userId) {
-  if (facultyStore[userId]?.marker) {
-    facultyStore[userId].marker.remove();
-    delete facultyStore[userId];
-    updateStats();
-    updateFacultyList();
-  }
+  const row = facultyStore[userId];
+  if (!row) return;
+  if (row.marker) row.marker.remove();
+  delete facultyStore[userId];
+  refreshFilteredViews();
 }
 
 // ====================================================================
@@ -600,16 +597,17 @@ async function loadAllLocations() {
     console.log('[loadAllLocations] filtered non-faculty rows:', data.length - visibleRows.length);
   }
 
+  Object.values(facultyStore).forEach(r => { if (r?.marker) r.marker.remove(); });
+  facultyStore = {};
+  visibleRows.forEach(r => upsertMarker(r, { flash: false, updateUI: false }));
+  refreshFilteredViews();
+
   if (visibleRows.length === 0) {
+    lastUpdateTime = null;
+    $('last-updated').textContent = 'Waiting for data…';
     setStatus('No faculty sharing location yet', false);
     showToast('ℹ️ No faculty are sharing their location right now', 'info', 4000);
   } else {
-    Object.values(facultyStore).forEach(r => { if (r?.marker) r.marker.remove(); });
-    facultyStore = {};
-    visibleRows.forEach(r => upsertMarker(r, { flash: false, updateUI: false }));
-    updateBadgeCount();
-    updateStats();
-    updateFacultyList();
     lastUpdateTime = Date.now();
     $('last-updated').textContent = 'Updated just now';
     setStatus('Live · Connected', true);
@@ -624,11 +622,8 @@ async function loadAllLocations() {
 //  SIDEBAR — Stats & Faculty List
 // ====================================================================
 
-function updateStats() {
-  const rows = Object.values(facultyStore);
-  $('count-available').textContent = rows.filter(r => r.availability_status === 'available').length;
-  $('count-busy').textContent      = rows.filter(r => r.availability_status === 'busy').length;
-  $('count-offline').textContent   = rows.filter(r => r.availability_status === 'offline').length;
+function normalizeDepartmentValue(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
 function getSearchFilter() {
@@ -636,21 +631,104 @@ function getSearchFilter() {
   return input ? input.value.trim() : '';
 }
 
-function updateFacultyList(filter = getSearchFilter()) {
+function getDepartmentFilter() {
+  const el = $('dept-filter');
+  if (!el || el.value === 'all') return '';
+  return normalizeDepartmentValue(el.value);
+}
+
+function getStatusFilter() {
+  const el = $('status-filter');
+  if (!el || el.value === 'all') return '';
+  return String(el.value).toLowerCase();
+}
+
+function rowMatchesFilters(row, query, departmentFilter, statusFilter) {
+  if (departmentFilter && normalizeDepartmentValue(row.department) !== departmentFilter) {
+    return false;
+  }
+
+  if (statusFilter && String(row.availability_status || '').toLowerCase() !== statusFilter) {
+    return false;
+  }
+
+  if (!query) return true;
+
+  const hay = [row.name, row.department, row.availability_status]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return hay.includes(query);
+}
+
+function getFilteredRows() {
+  const query = getSearchFilter().trim().toLowerCase();
+  const departmentFilter = getDepartmentFilter();
+  const statusFilter = getStatusFilter();
+
+  return Object.values(facultyStore).filter(row =>
+    rowMatchesFilters(row, query, departmentFilter, statusFilter)
+  );
+}
+
+function updateFilterOptions() {
+  const deptSelect = $('dept-filter');
+  if (!deptSelect) return;
+
+  const previous = deptSelect.value || 'all';
+  const departmentsByKey = new Map();
+  Object.values(facultyStore).forEach(row => {
+    const raw = String(row.department || '').trim();
+    if (!raw) return;
+    const key = normalizeDepartmentValue(raw);
+    if (!departmentsByKey.has(key)) departmentsByKey.set(key, raw);
+  });
+
+  const sorted = Array.from(departmentsByKey.entries())
+    .sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: 'base' }));
+
+  deptSelect.innerHTML = '<option value="all">All Departments</option>';
+  sorted.forEach(([key, label]) => {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = label;
+    deptSelect.appendChild(opt);
+  });
+
+  deptSelect.value = Array.from(deptSelect.options).some(o => o.value === previous)
+    ? previous
+    : 'all';
+}
+
+function applyMarkerFilterVisibility(rows = getFilteredRows()) {
+  if (!map) return;
+
+  const visibleIds = new Set(rows.map(r => r.user_id));
+  Object.entries(facultyStore).forEach(([id, row]) => {
+    const marker = row?.marker;
+    if (!marker) return;
+
+    const shouldBeVisible = visibleIds.has(id);
+    const isVisible = map.hasLayer(marker);
+
+    if (shouldBeVisible && !isVisible) marker.addTo(map);
+    if (!shouldBeVisible && isVisible) map.removeLayer(marker);
+  });
+}
+
+function updateStats(rows = getFilteredRows()) {
+  $('count-available').textContent = rows.filter(r => r.availability_status === 'available').length;
+  $('count-busy').textContent      = rows.filter(r => r.availability_status === 'busy').length;
+  $('count-offline').textContent   = rows.filter(r => r.availability_status === 'offline').length;
+}
+
+function updateFacultyList(rows = getFilteredRows()) {
   const list = $('faculty-list');
-  const query = filter.trim().toLowerCase();
-  const rows = Object.values(facultyStore)
-    .filter(r => {
-      if (!query) return true;
-      const hay = [r.name, r.department, r.availability_status]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(query);
-    });
+  const hasFilters = !!(getSearchFilter() || getDepartmentFilter() || getStatusFilter());
+  applyMarkerFilterVisibility(rows);
 
   if (rows.length === 0) {
-    list.innerHTML = `<li class="list-placeholder">${query ? 'No results.' : 'No faculty online yet.'}</li>`;
+    list.innerHTML = `<li class="list-placeholder">${hasFilters ? 'No faculty match current filters.' : 'No faculty online yet.'}</li>`;
     return;
   }
 
@@ -676,8 +754,20 @@ function updateFacultyList(filter = getSearchFilter()) {
   });
 }
 
+function refreshFilteredViews() {
+  updateFilterOptions();
+  const rows = getFilteredRows();
+  updateBadgeCount(rows);
+  updateStats(rows);
+  updateFacultyList(rows);
+}
+
 // ── Faculty search ──────────────────────────────────────────────
-$('faculty-search').addEventListener('input', e => updateFacultyList(e.target.value));
+$('faculty-search').addEventListener('input', refreshFilteredViews);
+const deptFilterEl = $('dept-filter');
+if (deptFilterEl) deptFilterEl.addEventListener('change', refreshFilteredViews);
+const statusFilterEl = $('status-filter');
+if (statusFilterEl) statusFilterEl.addEventListener('change', refreshFilteredViews);
 
 // ── Refresh button ──────────────────────────────────────────────
 $('refresh-btn').addEventListener('click', async () => {
@@ -690,8 +780,9 @@ $('refresh-btn').addEventListener('click', async () => {
 
 // ── Fit-all button (zoom to show every marker) ─────────────────
 $('fit-btn').addEventListener('click', () => {
+  const rows = getFilteredRows();
   fitAllMarkers();
-  if (Object.keys(facultyStore).length === 0 && !myMarker) {
+  if (rows.length === 0 && !myMarker) {
     showToast('No markers on map yet', 'info', 2000);
   }
 });
@@ -734,6 +825,19 @@ function openModal(userId) {
     if (map && hasValidCoords(r.latitude, r.longitude)) {
       map.setView([parseFloat(r.latitude), parseFloat(r.longitude)], 19);
     }
+  };
+
+  $('modal-directions-btn').onclick = () => {
+    if (!hasValidCoords(r.latitude, r.longitude)) {
+      showToast('Directions unavailable for this faculty location.', 'warning', 3000);
+      return;
+    }
+
+    const dest = `${parseFloat(r.latitude)},${parseFloat(r.longitude)}`;
+    const origin = myMarker ? myMarker.getLatLng() : null;
+    const originParam = origin ? `&origin=${encodeURIComponent(`${origin.lat},${origin.lng}`)}` : '';
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}${originParam}&travelmode=walking`;
+    window.open(url, '_blank', 'noopener');
   };
 }
 
@@ -987,6 +1091,10 @@ function resetUI() {
   if (signupSuccess) signupSuccess.classList.add('hidden');
   const searchInput = $('faculty-search');
   if (searchInput) searchInput.value = '';
+  const deptFilter = $('dept-filter');
+  if (deptFilter) deptFilter.value = 'all';
+  const statusFilter = $('status-filter');
+  if (statusFilter) statusFilter.value = 'all';
   const facultyList = $('faculty-list');
   if (facultyList) facultyList.innerHTML = '<li class="list-placeholder">No faculty online yet.</li>';
   ['count-available','count-busy','count-offline'].forEach(id => {
