@@ -6,7 +6,7 @@
 //    · Everything else → Stale-while-revalidate
 // ====================================================================
 
-const CACHE_VERSION = 'v9';
+const CACHE_VERSION = 'v10';
 const CACHE_NAME    = `faculty-tracker-${CACHE_VERSION}`;
 
 const STATIC_SHELL = [
@@ -15,6 +15,7 @@ const STATIC_SHELL = [
   './style.css',
   './script.js',
   './manifest.json',
+  './icons/facultytrack-logo.svg',
   './lib/leaflet.js',
   './lib/leaflet.css',
 ];
@@ -170,7 +171,7 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('push', (event) => {
   if (!event.data) return;
   const data = event.data.json();
-  self.registration.showNotification(data.title ?? 'Faculty Tracker', {
+  self.registration.showNotification(data.title ?? 'FacultyTrack', {
     body:  data.body ?? '',
     icon:  '/icons/icon-192.png',
     badge: '/icons/icon-192.png',

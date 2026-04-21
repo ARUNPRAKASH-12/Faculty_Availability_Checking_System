@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="FacultyTrack logo">
+  <rect width="512" height="512" rx="72" fill="#f5efda"/>
+  <g fill="none" stroke="#111111" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M136 386 L376 386 L336 314 L176 314 Z" stroke-width="12"/>
+    <path d="M255 96 C199 96 154 141 154 197 C154 271 227 348 255 386 C283 348 356 271 356 197 C356 141 311 96 255 96 Z" fill="#e83315" stroke-width="12"/>
+    <circle cx="255" cy="190" r="38" fill="#f5efda" stroke-width="12"/>
+  </g>
+</svg>

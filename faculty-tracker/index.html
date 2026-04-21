@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#2563eb" />
   <meta name="description" content="Real-time faculty availability and GPS location tracking system for campuses." />
   <meta name="mobile-web-app-capable" content="yes" />
-  <title>Faculty Tracker - Location & Availability</title>
+  <title>FacultyTrack - Location & Availability</title>
 
-  <!-- Inline SVG favicon -->
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Ccircle cx='16' cy='13' r='5' fill='white'/%3E%3Cpath d='M16 18 C10 18 8 23 16 26 C24 23 22 18 16 18Z' fill='white'/%3E%3C/svg%3E" />
+  <!-- App favicon -->
+  <link rel="icon" type="image/svg+xml" href="icons/facultytrack-logo.svg" />
 
   <!-- PWA Manifest -->
   <link rel="manifest" href="manifest.json" />
@@ -64,8 +64,8 @@
   ===================================================== -->
   <div id="splash-screen">
     <div class="splash-inner">
-      <div class="splash-icon">📍</div>
-      <h2>Faculty Tracker</h2>
+      <div class="splash-icon"><img src="icons/facultytrack-logo.svg" alt="FacultyTrack logo" class="logo-mark logo-splash" /></div>
+      <h2>FacultyTrack</h2>
       <p>Campus Location &amp; Availability System</p>
       <div class="spinner"></div>
     </div>
@@ -79,8 +79,8 @@
 
       <!-- Brand Header -->
       <div class="auth-brand">
-        <span class="brand-icon">🏫</span>
-        <h1>Faculty Tracker</h1>
+        <span class="brand-icon"><img src="icons/facultytrack-logo.svg" alt="FacultyTrack logo" class="logo-mark logo-auth" /></span>
+        <h1>FacultyTrack</h1>
         <p class="brand-sub">Campus Location &amp; Availability System</p>
       </div>
 
@@ -159,8 +159,8 @@
     <!-- ── Top Navigation Bar ── -->
     <nav class="topbar">
       <div class="topbar-left">
-        <span class="topbar-icon">📍</span>
-        <span class="topbar-title">Faculty Tracker</span>
+        <span class="topbar-icon"><img src="icons/facultytrack-logo.svg" alt="FacultyTrack logo" class="logo-mark logo-topbar" /></span>
+        <span class="topbar-title">FacultyTrack</span>
       </div>
       <div class="topbar-center">
         <span class="status-dot" id="status-dot"></span>
@@ -196,7 +196,7 @@
 
         <!-- Search -->
         <div class="search-box">
-          <input type="text" id="faculty-search" placeholder="🔍  Search faculty by name…" />
+          <input type="text" id="faculty-search" placeholder="Search faculty by name..." />
         </div>
 
         <!-- Directory Filters -->
@@ -244,6 +244,17 @@
               <option value="available">🟢 Available</option>
               <option value="busy">🔴 Busy</option>
               <option value="offline">⚫ Offline</option>
+            </select>
+          </div>
+          <div class="input-group compact">
+            <label for="floor-select">Current Floor</label>
+            <select id="floor-select">
+              <option value="Ground">Ground</option>
+              <option value="Floor 1">Floor 1</option>
+              <option value="Floor 2">Floor 2</option>
+              <option value="Floor 3">Floor 3</option>
+              <option value="Floor 4">Floor 4</option>
+              <option value="Floor 5">Floor 5</option>
             </select>
           </div>
           <button id="track-btn" class="btn btn-green btn-full">
@@ -311,6 +322,10 @@
         <div class="info-row">
           <span class="info-label">Department</span>
           <span id="modal-dept">–</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Floor</span>
+          <span id="modal-floor">–</span>
         </div>
         <div class="info-row">
           <span class="info-label">Last Updated</span>

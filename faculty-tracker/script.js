@@ -73,6 +73,7 @@ let dashboardReady  = false;
 let lastUpdateTime  = null;    // epoch ms of last faculty_locations write
 let timeCounterTimer = null;   // setInterval reference
 let facultyRoleCache = { ids: null, loadedAt: 0 };
+let supportsFloorColumn = true;
 
 // ====================================================================
 //  HELPERS — UI
@@ -108,7 +109,7 @@ function getSessionProfileFallback() {
 async function getFacultyIds(force = false) {
   const ttlMs = 60000;
   const age = Date.now() - facultyRoleCache.loadedAt;
-  if (!force && facultyRoleCache.ids && age < ttlMs) return facultyRoleCache.ids;
+  if (!force && age < ttlMs) return facultyRoleCache.ids;
 
   try {
     const { data, error } = await supabase
@@ -120,6 +121,14 @@ async function getFacultyIds(force = false) {
       return null;
     }
     const ids = new Set((data || []).map(r => r.id).filter(Boolean));
+
+    // With strict RLS, this query can return an empty set for students.
+    // Treat empty as "unknown" so we don't accidentally hide all faculty rows.
+    if (ids.size === 0) {
+      facultyRoleCache = { ids: null, loadedAt: Date.now() };
+      return null;
+    }
+
     facultyRoleCache = { ids, loadedAt: Date.now() };
     return ids;
   } catch (err) {
@@ -132,6 +141,16 @@ async function shouldDisplayFacultyRow(userId) {
   const ids = await getFacultyIds();
   if (!ids) return true; // fallback when profiles table/network is unavailable
   return ids.has(userId);
+}
+
+function normalizeFloor(floor) {
+  const value = String(floor || '').trim();
+  return value || 'Ground';
+}
+
+function getSelectedFloor() {
+  const floorSelect = $('floor-select');
+  return normalizeFloor(floorSelect?.value);
 }
 
 function isNativeCapacitorRuntime() {
@@ -189,6 +208,26 @@ function formatBackendError(action, err) {
     return `Cannot ${action}. Unable to reach backend (${getSupabaseHost()}). Check internet or update SUPABASE_URL.`;
   }
   return msg || `Cannot ${action}.`;
+}
+
+async function openExternalUrl(url) {
+  try {
+    if (isNativeCapacitorRuntime()) {
+      const browser = globalThis.Capacitor?.Plugins?.Browser;
+      if (browser?.open) {
+        await browser.open({ url });
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('[openExternalUrl] native browser open failed:', err?.message || err);
+  }
+
+  const win = window.open(url, '_blank', 'noopener,noreferrer');
+  if (!win) {
+    // Popup can be blocked in some webviews/browsers.
+    location.href = url;
+  }
 }
 
 let backendReachability = { checkedAt: 0, ok: null };
@@ -443,7 +482,8 @@ function upsertMarker(row, opts = {}) {
   const lng    = parseFloat(row.longitude);
   const key    = row.user_id;
   const status = row.availability_status || 'offline';
-  const label  = `${row.name} · ${status}`;
+  const floor  = normalizeFloor(row.floor);
+  const label  = `${row.name} · ${status} · ${floor}`;
 
   if (facultyStore[key]?.marker) {
     // Update existing marker — show flash animation
@@ -468,7 +508,7 @@ function upsertMarker(row, opts = {}) {
     facultyStore[key].marker = marker;
   }
 
-  facultyStore[key] = { ...facultyStore[key], ...row };
+  facultyStore[key] = { ...facultyStore[key], ...row, floor };
 
   // Update all reactive UI
   if (updateUI) {
@@ -591,9 +631,10 @@ async function loadAllLocations() {
 
   console.log('[loadAllLocations] got', data.length, 'rows:', data);
   const facultyIds = await getFacultyIds(true);
-  const visibleRows = facultyIds ? data.filter(r => facultyIds.has(r.user_id)) : data;
+  const canFilterByRole = !!(facultyIds && facultyIds.size > 0);
+  const visibleRows = canFilterByRole ? data.filter(r => facultyIds.has(r.user_id)) : data;
 
-  if (facultyIds && visibleRows.length !== data.length) {
+  if (canFilterByRole && visibleRows.length !== data.length) {
     console.log('[loadAllLocations] filtered non-faculty rows:', data.length - visibleRows.length);
   }
 
@@ -742,7 +783,7 @@ function updateFacultyList(rows = getFilteredRows()) {
         <span class="fl-dot" style="background:${markerColor(r.availability_status)}"></span>
         <div>
           <div class="fl-name">${r.name}</div>
-          <div class="fl-dept">${r.department || 'Faculty'}</div>
+          <div class="fl-dept">${r.department || 'Faculty'} · ${normalizeFloor(r.floor)}</div>
         </div>
         <span class="fl-status ${r.availability_status}">${r.availability_status}</span>
       </li>`)
@@ -803,8 +844,10 @@ function openModal(userId) {
   const r = facultyStore[userId];
   if (!r) return;
 
+  document.body.classList.add('modal-open');
   $('modal-name').textContent   = r.name || 'Unknown';
   $('modal-dept').textContent   = r.department || '–';
+  $('modal-floor').textContent  = normalizeFloor(r.floor);
   $('modal-time').textContent   = r.updated_at ? new Date(r.updated_at).toLocaleString() : '–';
   $('modal-coords').textContent = hasValidCoords(r.latitude, r.longitude)
     ? `${parseFloat(r.latitude).toFixed(5)}, ${parseFloat(r.longitude).toFixed(5)}`
@@ -837,11 +880,12 @@ function openModal(userId) {
     const origin = myMarker ? myMarker.getLatLng() : null;
     const originParam = origin ? `&origin=${encodeURIComponent(`${origin.lat},${origin.lng}`)}` : '';
     const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}${originParam}&travelmode=walking`;
-    window.open(url, '_blank', 'noopener');
+    void openExternalUrl(url);
   };
 }
 
 function closeFacultyModal() {
+  document.body.classList.remove('modal-open');
   $('faculty-modal').classList.add('hidden');
 }
 
@@ -1026,6 +1070,8 @@ function resetUI() {
   cachedProfile  = null;
   isFaculty      = false;
   dashboardReady = false;
+  supportsFloorColumn = true;
+  document.body.classList.remove('modal-open');
 
   // Unsubscribe realtime
   if (realtimeChannel) {
@@ -1091,6 +1137,8 @@ function resetUI() {
   if (signupSuccess) signupSuccess.classList.add('hidden');
   const searchInput = $('faculty-search');
   if (searchInput) searchInput.value = '';
+  const floorSelect = $('floor-select');
+  if (floorSelect) floorSelect.value = 'Ground';
   const deptFilter = $('dept-filter');
   if (deptFilter) deptFilter.value = 'all';
   const statusFilter = $('status-filter');
@@ -1259,6 +1307,17 @@ $('availability-select').addEventListener('change', async () => {
   const { lat, lng } = myMarker.getLatLng();
   const saved = await pushLocation({ latitude: lat, longitude: lng }, $('availability-select').value);
   if (saved) upsertMarker(saved);
+});
+
+$('floor-select').addEventListener('change', async () => {
+  if (!isFaculty || !isTracking || !currentUser) return;
+  if (!myMarker) return;
+  const { lat, lng } = myMarker.getLatLng();
+  const saved = await pushLocation({ latitude: lat, longitude: lng }, $('availability-select').value);
+  if (saved) {
+    upsertMarker(saved);
+    showToast(`Floor updated to ${normalizeFloor(saved.floor)}`, 'info', 1800);
+  }
 });
 
 async function startTracking() {
@@ -1483,6 +1542,7 @@ async function pushLocation(coords, status) {
 
   const latitude = Number.parseFloat(coords.latitude);
   const longitude = Number.parseFloat(coords.longitude);
+  const floor = getSelectedFloor();
 
   try {
     // Use cached profile — avoid a DB round-trip on every GPS update
@@ -1506,11 +1566,29 @@ async function pushLocation(coords, status) {
       updated_at:          new Date().toISOString(),
     };
 
+    if (supportsFloorColumn) {
+      payload.floor = floor;
+    }
+
     console.log('[pushLocation] upserting:', payload);
 
-    const { error } = await supabase
+    let { error } = await supabase
       .from('faculty_locations')
       .upsert(payload, { onConflict: 'user_id' });
+
+    if (error?.code === '42703' && supportsFloorColumn) {
+      // DB doesn't have `floor` yet — retry without that field and keep app functional.
+      console.warn('[pushLocation] floor column missing, retrying without floor');
+      supportsFloorColumn = false;
+      delete payload.floor;
+      const retry = await supabase
+        .from('faculty_locations')
+        .upsert(payload, { onConflict: 'user_id' });
+      error = retry.error;
+      if (!error) {
+        showToast('Floor column is not configured in database yet. Run SQL migration to store floors.', 'warning', 5000);
+      }
+    }
 
     if (error) {
       console.error('[pushLocation] DB error:', error.code, error.message);
@@ -1525,7 +1603,7 @@ async function pushLocation(coords, status) {
     }
 
     console.log('[pushLocation] saved OK');
-    return payload;   // caller can use this to immediately render the marker
+    return { ...payload, floor };   // caller can use this to immediately render the marker
   } catch (err) {
     const msg = formatBackendError('save live location', err);
     $('gps-status').textContent = `❌ ${msg}`;
@@ -1559,8 +1637,7 @@ async function markSelfOffline() {
         const tt = m.getTooltip();
         if (tt) tt.setContent(`${facultyStore[currentUser.id].name} · offline`);
       }
-      updateStats();
-      updateFacultyList();
+      refreshFilteredViews();
     }
   }
 }

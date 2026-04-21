@@ -1,6 +1,6 @@
 {
-  "name": "Faculty Availability & Location Tracker",
-  "short_name": "FacultyTracker",
+  "name": "FacultyTrack",
+  "short_name": "FacultyTrack",
   "description": "Real-time GPS faculty availability and campus location tracking system for students and staff.",
   "start_url": "./index.html",
   "scope": "./",

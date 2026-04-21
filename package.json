@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "@capacitor/android": "^8.3.1",
+    "@capacitor/browser": "^8.0.3",
     "@capacitor/core": "^8.3.1",
     "@capacitor/geolocation": "^8.2.0"
   },
