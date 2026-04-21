@@ -13,8 +13,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 // ── Configuration ────────────────────────────────────────────────
-const SUPABASE_URL      = 'https://ffdsapdnrwuhobcrbgjl.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZmZHNhcGRucnd1aG9iY3JiZ2psIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE0MjU4OTgsImV4cCI6MjA4NzAwMTg5OH0.ChK4ADjvyUQhdColQFswy1v2ezj88_0LNxCPG6KVAAQ';
+const APP_CONFIG = globalThis.APP_CONFIG || {};
+const SUPABASE_URL      = APP_CONFIG.SUPABASE_URL || 'https://ffdsapdnrwuhobcrbgjl.supabase.co';
+const SUPABASE_ANON_KEY = APP_CONFIG.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZmZHNhcGRucnd1aG9iY3JiZ2psIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE0MjU4OTgsImV4cCI6MjA4NzAwMTg5OH0.ChK4ADjvyUQhdColQFswy1v2ezj88_0LNxCPG6KVAAQ';
 
 /** Campus centre coordinates (Madurai campus default) */
 const CAMPUS_CENTER = { lat: 9.9252, lng: 78.1198 };
@@ -78,19 +79,104 @@ let timeCounterTimer = null;   // setInterval reference
 
 function $(id) { return document.getElementById(id); }
 
-/** Show the HTTPS warning inside the tracking panel if not on a secure origin */
-function checkHttpsWarning() {
-  const isSecure = location.protocol === 'https:'
+function getLocalhostUrl() {
+  const protocol = location.protocol === 'https:' ? 'https:' : 'http:';
+  const port = location.port ? `:${location.port}` : '';
+  return `${protocol}//localhost${port}${location.pathname}`;
+}
+
+function isSecureOriginForGeolocation() {
+  return location.protocol === 'https:'
     || location.hostname === 'localhost'
     || location.hostname === '127.0.0.1'
     || location.hostname === '::1';
+}
+
+function isNativeCapacitorRuntime() {
+  try {
+    return !!globalThis.Capacitor?.isNativePlatform?.();
+  } catch (_) {
+    return false;
+  }
+}
+
+function getNativeGeolocationPlugin() {
+  return globalThis.Capacitor?.Plugins?.Geolocation || null;
+}
+
+function normalizeGeolocationError(err) {
+  const message = String(err?.message || err || 'Unknown geolocation error');
+  const lower = message.toLowerCase();
+  let code = Number(err?.code);
+
+  if (!Number.isFinite(code)) {
+    if (lower.includes('denied') || lower.includes('permission')) code = 1;
+    else if (lower.includes('timeout')) code = 3;
+    else code = 2;
+  }
+
+  return { code, message };
+}
+
+function hasValidCoords(lat, lng) {
+  const latNum = Number.parseFloat(lat);
+  const lngNum = Number.parseFloat(lng);
+  return Number.isFinite(latNum) && Number.isFinite(lngNum);
+}
+
+function getSupabaseHost() {
+  try {
+    return new URL(SUPABASE_URL).host;
+  } catch (_) {
+    return SUPABASE_URL;
+  }
+}
+
+function isLikelyNetworkError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  return msg.includes('failed to fetch')
+    || msg.includes('networkerror')
+    || msg.includes('err_name_not_resolved')
+    || msg.includes('dns')
+    || msg.includes('timed out');
+}
+
+function formatBackendError(action, err) {
+  const msg = String(err?.message || err || '').trim();
+  if (isLikelyNetworkError(err)) {
+    return `Cannot ${action}. Unable to reach backend (${getSupabaseHost()}). Check internet or update SUPABASE_URL.`;
+  }
+  return msg || `Cannot ${action}.`;
+}
+
+let backendReachability = { checkedAt: 0, ok: null };
+
+async function isBackendReachable(force = false) {
+  const cacheMs = 30000;
+  if (!force && backendReachability.ok !== null && (Date.now() - backendReachability.checkedAt) < cacheMs) {
+    return backendReachability.ok;
+  }
+
+  try {
+    await fetch(SUPABASE_URL, { method: 'GET', mode: 'no-cors', cache: 'no-store' });
+    backendReachability = { checkedAt: Date.now(), ok: true };
+  } catch (_) {
+    backendReachability = { checkedAt: Date.now(), ok: false };
+  }
+
+  return backendReachability.ok;
+}
+
+/** Show the HTTPS warning inside the tracking panel if not on a secure origin */
+function checkHttpsWarning() {
+  const isSecure = isSecureOriginForGeolocation();
   const warn = $('https-warning');
   const link = $('localhost-link');
   if (!warn) return;
   if (isSecure) {
     warn.classList.add('hidden');
   } else {
-    const localhostUrl = window.location.href.replace(/^http:\/\/[^/]+/, 'http://localhost:5500');
+    const localhostUrl = getLocalhostUrl();
     if (link) { link.textContent = localhostUrl; link.href = localhostUrl; }
     warn.classList.remove('hidden');
   }
@@ -129,6 +215,14 @@ function showPage(id) {
   ['login-screen', 'dashboard'].forEach(p => {
     $(p).classList.toggle('hidden', p !== id);
   });
+}
+
+function setAuthTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $('login-form').classList.toggle('active-form', tab === 'login');
+  $('login-form').classList.toggle('hidden',      tab !== 'login');
+  $('signup-form').classList.toggle('active-form', tab === 'signup');
+  $('signup-form').classList.toggle('hidden',       tab !== 'signup');
 }
 
 // ====================================================================
@@ -278,7 +372,9 @@ function fitAllMarkers() {
   if (!map) return;
   const points = [];
   Object.values(facultyStore).forEach(r => {
-    if (r.latitude) points.push([parseFloat(r.latitude), parseFloat(r.longitude)]);
+    if (hasValidCoords(r.latitude, r.longitude)) {
+      points.push([parseFloat(r.latitude), parseFloat(r.longitude)]);
+    }
   });
   if (myMarker) {
     const ll = myMarker.getLatLng();
@@ -293,9 +389,13 @@ function fitAllMarkers() {
 }
 
 /** Create or update an animated divIcon marker for one faculty row */
-function upsertMarker(row) {
+function upsertMarker(row, opts = {}) {
+  const { flash = true, updateUI = true } = opts;
   if (!map) { console.warn('[upsertMarker] map not ready, skipping:', row); return; }
-  if (!row?.latitude) { console.warn('[upsertMarker] no coordinates for:', row?.name); return; }
+  if (!hasValidCoords(row?.latitude, row?.longitude)) {
+    console.warn('[upsertMarker] no coordinates for:', row?.name);
+    return;
+  }
 
   const lat    = parseFloat(row.latitude);
   const lng    = parseFloat(row.longitude);
@@ -307,14 +407,16 @@ function upsertMarker(row) {
     // Update existing marker — show flash animation
     const m = facultyStore[key].marker;
     m.setLatLng([lat, lng]);
-    m.setIcon(makeMarkerIcon(status, true));
+    m.setIcon(makeMarkerIcon(status, flash));
     m.setTooltipContent(label);
     // Remove flash class after animation completes (~500 ms)
-    setTimeout(() => {
-      if (facultyStore[key]?.marker) {
-        facultyStore[key].marker.setIcon(makeMarkerIcon(status, false));
-      }
-    }, 550);
+    if (flash) {
+      setTimeout(() => {
+        if (facultyStore[key]?.marker) {
+          facultyStore[key].marker.setIcon(makeMarkerIcon(status, false));
+        }
+      }, 550);
+    }
   } else {
     // New marker
     const marker = L.marker([lat, lng], { icon: makeMarkerIcon(status) }).addTo(map);
@@ -327,12 +429,14 @@ function upsertMarker(row) {
   facultyStore[key] = { ...facultyStore[key], ...row };
 
   // Update all reactive UI
-  lastUpdateTime = Date.now();
-  $('last-updated').textContent = 'Updated just now';
-  flashBadge();
-  updateBadgeCount();
-  updateStats();
-  updateFacultyList();
+  if (updateUI) {
+    lastUpdateTime = Date.now();
+    $('last-updated').textContent = 'Updated just now';
+    flashBadge();
+    updateBadgeCount();
+    updateStats();
+    updateFacultyList();
+  }
 
   // Flash the corresponding sidebar list item briefly
   const li = document.querySelector(`.faculty-list-item[data-uid="${key}"]`);
@@ -414,9 +518,21 @@ function subscribeRealtime() {
 /** Load all faculty rows once (called from subscribeRealtime SUBSCRIBED callback) */
 async function loadAllLocations() {
   console.log('[loadAllLocations] fetching all faculty_locations…');
-  const { data, error } = await supabase
-    .from('faculty_locations')
-    .select('*');
+  let data = null;
+  let error = null;
+  try {
+    const result = await supabase
+      .from('faculty_locations')
+      .select('*');
+    data = result.data;
+    error = result.error;
+  } catch (err) {
+    const msg = formatBackendError('load locations', err);
+    console.error('[loadAllLocations] network error:', err);
+    setStatus('Backend unreachable', false);
+    showToast(msg, 'error', 8000);
+    return;
+  }
 
   if (error) {
     if (error.code === '42P01') {
@@ -434,7 +550,14 @@ async function loadAllLocations() {
     setStatus('No faculty sharing location yet', false);
     showToast('ℹ️ No faculty are sharing their location right now', 'info', 4000);
   } else {
-    data.forEach(upsertMarker);
+    Object.values(facultyStore).forEach(r => { if (r?.marker) r.marker.remove(); });
+    facultyStore = {};
+    data.forEach(r => upsertMarker(r, { flash: false, updateUI: false }));
+    updateBadgeCount();
+    updateStats();
+    updateFacultyList();
+    lastUpdateTime = Date.now();
+    $('last-updated').textContent = 'Updated just now';
     setStatus('Live · Connected', true);
     // Auto-fit map to show all loaded markers
     setTimeout(fitAllMarkers, 300);
@@ -454,13 +577,26 @@ function updateStats() {
   $('count-offline').textContent   = rows.filter(r => r.availability_status === 'offline').length;
 }
 
-function updateFacultyList(filter = '') {
+function getSearchFilter() {
+  const input = $('faculty-search');
+  return input ? input.value.trim() : '';
+}
+
+function updateFacultyList(filter = getSearchFilter()) {
   const list = $('faculty-list');
+  const query = filter.trim().toLowerCase();
   const rows = Object.values(facultyStore)
-    .filter(r => r.name?.toLowerCase().includes(filter.toLowerCase()));
+    .filter(r => {
+      if (!query) return true;
+      const hay = [r.name, r.department, r.availability_status]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(query);
+    });
 
   if (rows.length === 0) {
-    list.innerHTML = `<li class="list-placeholder">${filter ? 'No results.' : 'No faculty online yet.'}</li>`;
+    list.innerHTML = `<li class="list-placeholder">${query ? 'No results.' : 'No faculty online yet.'}</li>`;
     return;
   }
 
@@ -525,7 +661,7 @@ function openModal(userId) {
   $('modal-name').textContent   = r.name || 'Unknown';
   $('modal-dept').textContent   = r.department || '–';
   $('modal-time').textContent   = r.updated_at ? new Date(r.updated_at).toLocaleString() : '–';
-  $('modal-coords').textContent = r.latitude
+  $('modal-coords').textContent = hasValidCoords(r.latitude, r.longitude)
     ? `${parseFloat(r.latitude).toFixed(5)}, ${parseFloat(r.longitude).toFixed(5)}`
     : '–';
 
@@ -541,7 +677,7 @@ function openModal(userId) {
   // "Center on Map" button
   $('modal-navigate-btn').onclick = () => {
     closeFacultyModal();
-    if (map && r.latitude) {
+    if (map && hasValidCoords(r.latitude, r.longitude)) {
       map.setView([parseFloat(r.latitude), parseFloat(r.longitude)], 19);
     }
   };
@@ -561,14 +697,7 @@ $('modal-backdrop').addEventListener('click', closeFacultyModal);
 // ── Tab Switcher ────────────────────────────────────────────────
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-
-    const tab = btn.dataset.tab;
-    $('login-form').classList.toggle('active-form', tab === 'login');
-    $('login-form').classList.toggle('hidden',      tab !== 'login');
-    $('signup-form').classList.toggle('active-form', tab === 'signup');
-    $('signup-form').classList.toggle('hidden',       tab !== 'signup');
+    setAuthTab(btn.dataset.tab);
   });
 });
 
@@ -589,26 +718,39 @@ $('login-form').addEventListener('submit', async (e) => {
   errEl.classList.add('hidden');
   setLoading('login-btn', true);
 
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  setLoading('login-btn', false);
-
-  if (error) {
-    const msg = error.message.toLowerCase();
-    if (msg.includes('email not confirmed')) {
-      errEl.innerHTML =
-        '📧 Email not confirmed yet.<br>' +
-        'Check your inbox, or go to <b>Supabase → Authentication → Settings</b> ' +
-        'and disable <b>"Enable email confirmations"</b> to skip this step.';
-    } else if (msg.includes('rate limit') || msg.includes('429')) {
-      errEl.innerHTML =
-        '⚠️ Too many attempts. Wait a few minutes, or disable email confirmations in ' +
-        '<b>Supabase → Authentication → Settings</b>.';
-    } else {
-      errEl.textContent = error.message;
+  try {
+    const reachable = await isBackendReachable(true);
+    if (!reachable) {
+      throw new Error(`Unable to reach backend (${getSupabaseHost()}). Check SUPABASE_URL and internet.`);
     }
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      const msg = error.message.toLowerCase();
+      if (msg.includes('email not confirmed')) {
+        errEl.innerHTML =
+          '📧 Email not confirmed yet.<br>' +
+          'Check your inbox, or go to <b>Supabase → Authentication → Settings</b> ' +
+          'and disable <b>"Enable email confirmations"</b> to skip this step.';
+      } else if (msg.includes('rate limit') || msg.includes('429')) {
+        errEl.innerHTML =
+          '⚠️ Too many attempts. Wait a few minutes, or disable email confirmations in ' +
+          '<b>Supabase → Authentication → Settings</b>.';
+      } else {
+        errEl.textContent = error.message;
+      }
+      errEl.classList.remove('hidden');
+      return;
+    }
+    // Success handled by onAuthStateChange
+  } catch (err) {
+    const msg = formatBackendError('sign in', err);
+    errEl.textContent = msg;
     errEl.classList.remove('hidden');
+    showToast(msg, 'error', 8000);
+  } finally {
+    setLoading('login-btn', false);
   }
-  // Success handled by onAuthStateChange
 });
 
 // ── Sign Up ──────────────────────────────────────────────────────
@@ -625,61 +767,69 @@ $('signup-form').addEventListener('submit', async (e) => {
   succEl.classList.add('hidden');
   setLoading('signup-btn', true);
 
-  // 1. Create auth user
-  const { data, error: signUpErr } = await supabase.auth.signUp({ email, password });
+  try {
+    const reachable = await isBackendReachable(true);
+    if (!reachable) {
+      throw new Error(`Unable to reach backend (${getSupabaseHost()}). Check SUPABASE_URL and internet.`);
+    }
 
-  if (signUpErr) {
-    setLoading('signup-btn', false);
+    // 1. Create auth user
+    const { data, error: signUpErr } = await supabase.auth.signUp({ email, password });
 
-    const msg = signUpErr.message.toLowerCase();
+    if (signUpErr) {
+      const msg = signUpErr.message.toLowerCase();
 
-    // Rate limit hit (429 / "email rate limit exceeded")
-    if (msg.includes('rate limit') || msg.includes('429') || msg.includes('over_email_send_rate_limit')) {
-      errEl.innerHTML =
-        '⚠️ Email rate limit reached (Supabase free tier: 3 emails/hour).<br><br>' +
-        '<b>Fix:</b> In your Supabase Dashboard → <b>Authentication → Settings</b> → ' +
-        'disable <b>"Enable email confirmations"</b>, then try again.';
+      // Rate limit hit (429 / "email rate limit exceeded")
+      if (msg.includes('rate limit') || msg.includes('429') || msg.includes('over_email_send_rate_limit')) {
+        errEl.innerHTML =
+          '⚠️ Email rate limit reached (Supabase free tier: 3 emails/hour).<br><br>' +
+          '<b>Fix:</b> In your Supabase Dashboard → <b>Authentication → Settings</b> → ' +
+          'disable <b>"Enable email confirmations"</b>, then try again.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      // Account already exists → fall through to login
+      if (msg.includes('already registered') || msg.includes('already exists')) {
+        const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInErr) {
+          errEl.textContent = 'Account exists — wrong password? ' + signInErr.message;
+          errEl.classList.remove('hidden');
+        }
+        return;
+      }
+
+      errEl.textContent = signUpErr.message;
       errEl.classList.remove('hidden');
       return;
     }
 
-    // Account already exists → fall through to login
-    if (msg.includes('already registered') || msg.includes('already exists')) {
-      const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
-      if (signInErr) {
-        errEl.textContent = 'Account exists — wrong password? ' + signInErr.message;
-        errEl.classList.remove('hidden');
-      }
-      return;
+    // 2. Insert profile — works even if email confirmation is pending
+    //    because we have the user.id from the signUp response
+    const userId = data.user?.id ?? data.session?.user?.id;
+    if (userId) {
+      const { error: profileErr } = await supabase.from('profiles').upsert({
+        id:         userId,
+        name,
+        department: dept,
+        role,
+      });
+      if (profileErr) console.warn('Profile insert error:', profileErr.message);
     }
 
-    errEl.textContent = signUpErr.message;
+    // If session is immediately available (email confirmation disabled in Supabase),
+    // onAuthStateChange will pick it up. Otherwise show confirmation message.
+    if (!data.session) {
+      succEl.textContent = '✅ Account created! Check your email inbox to confirm, then come back to Login.';
+      succEl.classList.remove('hidden');
+    }
+  } catch (err) {
+    const msg = formatBackendError('sign up', err);
+    errEl.textContent = msg;
     errEl.classList.remove('hidden');
-    return;
-  }
-
-  // 2. Insert profile — works even if email confirmation is pending
-  //    because we have the user.id from the signUp response
-  const userId = data.user?.id ?? data.session?.user?.id;
-  if (userId) {
-    const { error: profileErr } = await supabase.from('profiles').upsert({
-      id:         userId,
-      name,
-      department: dept,
-      role,
-    });
-    if (profileErr) console.warn('Profile insert error:', profileErr.message);
-  }
-
-  setLoading('signup-btn', false);
-
-  // If session is immediately available (email confirmation disabled in Supabase),
-  // onAuthStateChange will pick it up. Otherwise show confirmation message.
-  if (data.session) {
-    // Already logged in — onAuthStateChange handles the rest
-  } else {
-    succEl.textContent = '✅ Account created! Check your email inbox to confirm, then come back to Login.';
-    succEl.classList.remove('hidden');
+    showToast(msg, 'error', 8000);
+  } finally {
+    setLoading('signup-btn', false);
   }
 });
 
@@ -688,7 +838,13 @@ supabase.auth.onAuthStateChange(async (_event, session) => {
   if (session?.user) {
     currentUser = session.user;
     if (!dashboardReady) {
-      await initDashboard(session.user.id);
+      try {
+        await initDashboard(session.user.id);
+      } catch (err) {
+        console.error('[AuthState] initDashboard failed:', err);
+        showToast(formatBackendError('load dashboard', err), 'error', 8000);
+        resetUI();
+      }
     }
   } else {
     // Session ended — go to login. resetUI() does all cleanup.
@@ -721,7 +877,19 @@ function resetUI() {
   // Reset tracking state
   isTracking = false;
   lastUpdateTime = null;
-  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  if (watchId !== null) {
+    if (typeof watchId === 'string') {
+      const geo = getNativeGeolocationPlugin();
+      if (geo?.clearWatch) {
+        geo.clearWatch({ id: watchId }).catch(e => {
+          console.warn('[GPS] native clearWatch failed during reset:', e?.message || e);
+        });
+      }
+    } else if (navigator.geolocation?.clearWatch) {
+      navigator.geolocation.clearWatch(watchId);
+    }
+    watchId = null;
+  }
   if (timeCounterTimer) { clearInterval(timeCounterTimer); timeCounterTimer = null; }
   const trackMeBtn = $('track-me-btn');
   if (trackMeBtn) trackMeBtn.classList.add('hidden');
@@ -739,6 +907,22 @@ function resetUI() {
   if (loginEmail) loginEmail.value = '';
   const loginPw = $('login-password');
   if (loginPw) loginPw.value = '';
+  const signupName = $('signup-name');
+  if (signupName) signupName.value = '';
+  const signupDept = $('signup-dept');
+  if (signupDept) signupDept.value = '';
+  const signupEmail = $('signup-email');
+  if (signupEmail) signupEmail.value = '';
+  const signupPw = $('signup-password');
+  if (signupPw) signupPw.value = '';
+  const loginErr = $('login-error');
+  if (loginErr) loginErr.classList.add('hidden');
+  const signupErr = $('signup-error');
+  if (signupErr) signupErr.classList.add('hidden');
+  const signupSuccess = $('signup-success');
+  if (signupSuccess) signupSuccess.classList.add('hidden');
+  const searchInput = $('faculty-search');
+  if (searchInput) searchInput.value = '';
   const facultyList = $('faculty-list');
   if (facultyList) facultyList.innerHTML = '<li class="list-placeholder">No faculty online yet.</li>';
   ['count-available','count-busy','count-offline'].forEach(id => {
@@ -748,6 +932,7 @@ function resetUI() {
   const lu  = $('last-updated');    if (lu)  lu.textContent  = 'Waiting for data…';
 
   showPage('login-screen');
+  setAuthTab('login');
 }
 
 /** Load profile, show dashboard, init map, subscribe realtime */
@@ -855,13 +1040,20 @@ $('setup-save-btn').addEventListener('click', async () => {
   if (setupMsg) setupMsg.innerHTML = '⏳ Saving profile…';
 
   setLoading('setup-save-btn', true);
-  const { error } = await supabase.from('profiles').upsert({
-    id:         currentUser.id,
-    name,
-    department: dept,
-    role,
-  });
-  setLoading('setup-save-btn', false);
+  let error = null;
+  try {
+    const result = await supabase.from('profiles').upsert({
+      id:         currentUser.id,
+      name,
+      department: dept,
+      role,
+    });
+    error = result.error;
+  } catch (err) {
+    error = { message: formatBackendError('save profile', err), code: 'NETWORK' };
+  } finally {
+    setLoading('setup-save-btn', false);
+  }
 
   if (error) {
     console.error('[Profile save] upsert error:', error);
@@ -932,7 +1124,7 @@ $('logout-btn').addEventListener('click', async () => {
 
 $('track-btn').addEventListener('click', () => {
   if (isTracking) stopTracking();
-  else startTracking();
+  else void startTracking();
 });
 
 /** Change availability status immediately without stopping tracking */
@@ -945,31 +1137,49 @@ $('availability-select').addEventListener('change', async () => {
   if (saved) upsertMarker(saved);
 });
 
-function startTracking() {
-  if (!navigator.geolocation) {
+async function startTracking() {
+  const nativeGeo = isNativeCapacitorRuntime() ? getNativeGeolocationPlugin() : null;
+  const hasWebGeolocation = !!navigator.geolocation;
+
+  if (!nativeGeo && !hasWebGeolocation) {
     $('gps-status').textContent = '❌ Geolocation is not supported by this browser.';
     $('gps-status').style.color = '#ef4444';
     showToast('Geolocation not supported by this browser.', 'error');
     return;
   }
 
-  // Geolocation requires a secure origin (HTTPS or localhost).
-  // Show a warning if not on a secure origin, but still attempt watchPosition —
-  // the browser's native error handler (onGPSError) will report if it's blocked.
-  const isSecure = location.protocol === 'https:'
-    || location.hostname === 'localhost'
-    || location.hostname === '127.0.0.1'
-    || location.hostname === '::1';
+  // Geolocation in modern browsers requires a secure context.
+  const isSecure = isSecureOriginForGeolocation();
   const warn = $('https-warning');
   const link = $('localhost-link');
   if (!isSecure) {
-    const localhostUrl = window.location.href.replace(/^http:\/\/[^/]+/, 'http://localhost:5500');
+    const localhostUrl = getLocalhostUrl();
     if (warn) warn.classList.remove('hidden');
     if (link) { link.textContent = localhostUrl; link.href = localhostUrl; }
-    showToast('⚠️ GPS may be blocked on HTTP — try localhost:5500 if it fails', 'warning', 8000);
+    $('gps-status').textContent = '⚠️ Non-HTTPS origin detected. Trying GPS anyway…';
+    $('gps-status').style.color = '#92400e';
+    showToast('Use HTTPS for reliable GPS on mobile/laptop.', 'warning', 9000);
   } else {
     if (warn) warn.classList.add('hidden');
   }
+
+  // Early check to provide clear guidance when the user has blocked location.
+  if (!nativeGeo) {
+    try {
+      if (navigator.permissions?.query) {
+        const perm = await navigator.permissions.query({ name: 'geolocation' });
+        if (perm.state === 'denied') {
+          $('gps-status').textContent = '❌ Location permission is blocked. Enable it from browser settings.';
+          $('gps-status').style.color = '#ef4444';
+          showToast('Location permission blocked by browser settings.', 'error', 9000);
+          return;
+        }
+      }
+    } catch (_) {
+      // Permissions API is optional; watchPosition will still surface errors if unavailable.
+    }
+  }
+
   $('gps-status').style.color = '';
 
   isTracking = true;
@@ -977,6 +1187,36 @@ function startTracking() {
   $('track-btn').classList.add('tracking');
   $('gps-status').textContent = 'Acquiring GPS signal…';
   $('accuracy-bar').classList.remove('hidden');
+
+  if (nativeGeo) {
+    try {
+      if (nativeGeo.requestPermissions) {
+        const perm = await nativeGeo.requestPermissions();
+        if (perm?.location === 'denied' && perm?.coarseLocation === 'denied') {
+          const deniedErr = normalizeGeolocationError({ code: 1, message: 'Location permission denied' });
+          onGPSError(deniedErr);
+          return;
+        }
+      }
+
+      watchId = await nativeGeo.watchPosition(
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+        (position, err) => {
+          if (err) {
+            onGPSError(normalizeGeolocationError(err));
+            return;
+          }
+          if (position) {
+            void onGPSUpdate(position);
+          }
+        }
+      );
+      return;
+    } catch (err) {
+      onGPSError(normalizeGeolocationError(err));
+      return;
+    }
+  }
 
   watchId = navigator.geolocation.watchPosition(
     onGPSUpdate,
@@ -993,7 +1233,16 @@ function stopTracking() {
   $('accuracy-bar').classList.add('hidden');
 
   if (watchId !== null) {
-    navigator.geolocation.clearWatch(watchId);
+    if (typeof watchId === 'string') {
+      const geo = getNativeGeolocationPlugin();
+      if (geo?.clearWatch) {
+        geo.clearWatch({ id: watchId }).catch(e => {
+          console.warn('[GPS] native clearWatch failed:', e?.message || e);
+        });
+      }
+    } else if (navigator.geolocation?.clearWatch) {
+      navigator.geolocation.clearWatch(watchId);
+    }
     watchId = null;
   }
   if (myMarker) { myMarker.remove(); myMarker = null; }
@@ -1044,33 +1293,37 @@ async function onGPSUpdate(pos) {
 }
 
 function onGPSError(err) {
-  console.error('[GPS] error code', err.code, err.message);
+  const normalizedErr = normalizeGeolocationError(err);
+  const errCode = normalizedErr.code;
+  const errMessage = normalizedErr.message;
+
+  console.error('[GPS] error code', errCode, errMessage);
   let msg;
-  const errMsg = (err.message || '').toLowerCase();
+  const errMsg = (errMessage || '').toLowerCase();
   const isSecureOriginBlock = errMsg.includes('secure origin')
     || errMsg.includes('only secure origins')
     || errMsg.includes('insecure origin')
     || errMsg.includes('https')
-    || (err.code === 1 && location.protocol !== 'https:'
+    || (errCode === 1 && location.protocol !== 'https:'
         && location.hostname !== 'localhost'
         && location.hostname !== '127.0.0.1'
         && location.hostname !== '::1');
-  if (err.code === 1 && isSecureOriginBlock) {
-    const localhostUrl = window.location.href.replace(/^http:\/\/[^/]+/, 'http://localhost:5500');
+  if (errCode === 1 && isSecureOriginBlock) {
+    const localhostUrl = getLocalhostUrl();
     msg = '❌ HTTPS required for GPS. Open via: ' + localhostUrl;
     // Show the https warning banner
     const warn = $('https-warning');
     const link = $('localhost-link');
     if (warn) warn.classList.remove('hidden');
     if (link) { link.textContent = localhostUrl; link.href = localhostUrl; }
-  } else if (err.code === 1) {
+  } else if (errCode === 1) {
     msg = '❌ Location permission denied. Click the 🔒 icon in the address bar and allow Location.';
-  } else if (err.code === 2) {
+  } else if (errCode === 2) {
     msg = '❌ GPS signal unavailable. Try near a window or outdoors.';
-  } else if (err.code === 3) {
+  } else if (errCode === 3) {
     msg = '❌ GPS timed out. Move to an open area and try again.';
   } else {
-    msg = '❌ GPS error: ' + err.message;
+    msg = '❌ GPS error: ' + errMessage;
   }
   // Stop tracking — button must reset
   isTracking = false;
@@ -1090,60 +1343,78 @@ async function pushLocation(coords, status) {
   if (!currentUser) { console.warn('[pushLocation] no currentUser'); return null; }
 
   // Must have coordinates to save a meaningful location row
-  if (!coords?.latitude) {
+  if (!hasValidCoords(coords?.latitude, coords?.longitude)) {
     console.warn('[pushLocation] called without coords — skipping');
     return null;
   }
 
-  // Use cached profile — avoid a DB round-trip on every GPS update
-  if (!cachedProfile) {
-    const { data, error: pe } = await supabase
-      .from('profiles')
-      .select('name, department, role')
-      .eq('id', currentUser.id)
-      .maybeSingle();
-    if (pe) console.warn('[pushLocation] profile fetch error:', pe.message);
-    cachedProfile = data;
-  }
+  const latitude = Number.parseFloat(coords.latitude);
+  const longitude = Number.parseFloat(coords.longitude);
 
-  const payload = {
-    user_id:             currentUser.id,
-    name:                cachedProfile?.name || currentUser.email,
-    department:          cachedProfile?.department || '',
-    availability_status: status || 'available',
-    latitude:            coords.latitude,
-    longitude:           coords.longitude,
-    updated_at:          new Date().toISOString(),
-  };
+  try {
+    // Use cached profile — avoid a DB round-trip on every GPS update
+    if (!cachedProfile) {
+      const { data, error: pe } = await supabase
+        .from('profiles')
+        .select('name, department, role')
+        .eq('id', currentUser.id)
+        .maybeSingle();
+      if (pe) console.warn('[pushLocation] profile fetch error:', pe.message);
+      cachedProfile = data;
+    }
 
-  console.log('[pushLocation] upserting:', payload);
+    const payload = {
+      user_id:             currentUser.id,
+      name:                cachedProfile?.name || currentUser.email,
+      department:          cachedProfile?.department || '',
+      availability_status: status || 'available',
+      latitude,
+      longitude,
+      updated_at:          new Date().toISOString(),
+    };
 
-  const { error } = await supabase
-    .from('faculty_locations')
-    .upsert(payload, { onConflict: 'user_id' });
+    console.log('[pushLocation] upserting:', payload);
 
-  if (error) {
-    console.error('[pushLocation] DB error:', error.code, error.message);
-    let hint = '';
-    if (error.code === '42P01') hint = ' — faculty_locations table missing. Run SQL setup.';
-    else if (error.code === '42501' || error.message.includes('policy')) hint = ' — RLS policy blocked insert. Check your Supabase policies.';
-    const msg = `❌ DB save failed: ${error.message}${hint}`;
-    $('gps-status').textContent = msg;
+    const { error } = await supabase
+      .from('faculty_locations')
+      .upsert(payload, { onConflict: 'user_id' });
+
+    if (error) {
+      console.error('[pushLocation] DB error:', error.code, error.message);
+      let hint = '';
+      if (error.code === '42P01') hint = ' — faculty_locations table missing. Run SQL setup.';
+      else if (error.code === '42501' || error.message.includes('policy')) hint = ' — RLS policy blocked insert. Check your Supabase policies.';
+      const msg = `❌ DB save failed: ${error.message}${hint}`;
+      $('gps-status').textContent = msg;
+      $('gps-status').style.color = '#ef4444';
+      showToast(msg, 'error', 8000);
+      return null;
+    }
+
+    console.log('[pushLocation] saved OK');
+    return payload;   // caller can use this to immediately render the marker
+  } catch (err) {
+    const msg = formatBackendError('save live location', err);
+    $('gps-status').textContent = `❌ ${msg}`;
     $('gps-status').style.color = '#ef4444';
     showToast(msg, 'error', 8000);
     return null;
   }
-
-  console.log('[pushLocation] saved OK');
-  return payload;   // caller can use this to immediately render the marker
 }
 
 async function markSelfOffline() {
   if (!currentUser) return;
-  const { error } = await supabase
-    .from('faculty_locations')
-    .update({ availability_status: 'offline', updated_at: new Date().toISOString() })
-    .eq('user_id', currentUser.id);
+  let error = null;
+  try {
+    const result = await supabase
+      .from('faculty_locations')
+      .update({ availability_status: 'offline', updated_at: new Date().toISOString() })
+      .eq('user_id', currentUser.id);
+    error = result.error;
+  } catch (err) {
+    console.warn('[markSelfOffline] network error:', formatBackendError('mark offline', err));
+    return;
+  }
   if (!error) {
     // Update local store immediately so marker turns grey without waiting for RT
     if (facultyStore[currentUser.id]) {
@@ -1167,6 +1438,21 @@ async function markSelfOffline() {
 
 async function init() {
   try {
+    const reachable = await isBackendReachable(true);
+    if (!reachable) {
+      const msg = `Cannot reach backend (${getSupabaseHost()}). Verify SUPABASE_URL and your internet/DNS.`;
+      console.error('[init] backend unreachable:', msg);
+      showPage('login-screen');
+      setAuthTab('login');
+      const errEl = $('login-error');
+      if (errEl) {
+        errEl.textContent = msg;
+        errEl.classList.remove('hidden');
+      }
+      showToast(msg, 'error', 10000);
+      return;
+    }
+
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user) {
       currentUser = session.user;
@@ -1175,10 +1461,12 @@ async function init() {
       // so onAuthStateChange won't double-init
     } else {
       showPage('login-screen');
+      setAuthTab('login');
     }
   } catch (err) {
     console.error('Init error:', err);
     showPage('login-screen');
+    setAuthTab('login');
     showToast('Connection error: ' + err.message, 'error', 6000);
   } finally {
     clearTimeout(window._splashTimer);   // cancel the safety-net timer
