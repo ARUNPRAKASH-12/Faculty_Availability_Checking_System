@@ -6,11 +6,12 @@
 //    · Everything else → Stale-while-revalidate
 // ====================================================================
 
-const CACHE_VERSION = 'v4';
+const CACHE_VERSION = 'v8';
 const CACHE_NAME    = `faculty-tracker-${CACHE_VERSION}`;
 
 const STATIC_SHELL = [
   './index.html',
+  './app-config.js',
   './style.css',
   './script.js',
   './manifest.json',
@@ -25,6 +26,55 @@ const NETWORK_ONLY_HOSTS = [
   'arcgisonline.com',            // Esri satellite tiles
   'esm.sh',
 ];
+
+function toScopedPath(url) {
+  const scopePath = new URL(self.registration.scope).pathname.replace(/\/$/, '');
+  let path = url.pathname;
+  if (scopePath && path.startsWith(scopePath)) {
+    path = path.slice(scopePath.length) || '/';
+  }
+  return path;
+}
+
+function isStaticShellRequest(url) {
+  const scopedPath = toScopedPath(url);
+  return scopedPath === '/'
+    || STATIC_SHELL.some(path => scopedPath === path.replace(/^\.\//, '/'));
+}
+
+function expectsJson(request) {
+  const accept = request.headers.get('accept') || '';
+  return accept.includes('application/json')
+    || request.url.includes('/auth/v1/')
+    || request.url.includes('/rest/v1/')
+    || request.url.includes('/realtime/v1/');
+}
+
+async function offlineFallback(request) {
+  if (request.mode === 'navigate' || request.destination === 'document') {
+    const cachedShell = await caches.match(new URL('./index.html', self.registration.scope).toString());
+    if (cachedShell) return cachedShell;
+    return new Response(
+      '<!doctype html><html><head><meta charset="utf-8"><title>Offline</title></head><body><h1>Offline</h1><p>Network unavailable. Please reconnect and reload.</p></body></html>',
+      { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+    );
+  }
+
+  if (expectsJson(request)) {
+    return new Response(
+      JSON.stringify({
+        error: 'network_unavailable',
+        message: 'Network unavailable. Check internet connection and backend URL.'
+      }),
+      { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8' } }
+    );
+  }
+
+  return new Response('Network unavailable', {
+    status: 503,
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+  });
+}
 
 // ── Install: pre-cache app shell ─────────────────────────────────
 self.addEventListener('install', (event) => {
@@ -57,33 +107,43 @@ self.addEventListener('fetch', (event) => {
   // Only handle GET requests
   if (request.method !== 'GET') return;
 
+  // Ignore unsupported request combinations in some browsers.
+  if (request.cache === 'only-if-cached' && request.mode !== 'same-origin') return;
+
   const url = new URL(request.url);
 
   // 1. Network-only for external APIs
   if (NETWORK_ONLY_HOSTS.some(h => url.hostname.includes(h))) {
-    event.respondWith(fetch(request));
+    event.respondWith(
+      fetch(request).catch(() => offlineFallback(request))
+    );
     return;
   }
 
   // 2. Cache-first for static shell files
-  if (STATIC_SHELL.some(path => url.pathname === path || url.pathname === '/')) {
+  if (isStaticShellRequest(url)) {
     event.respondWith(
-      caches.match(request).then(cached => {
+      caches.open(CACHE_NAME).then(async cache => {
+        const scopedPath = toScopedPath(url);
+        const cacheKey = new URL(scopedPath === '/' ? './index.html' : `.${scopedPath}`, self.registration.scope).toString();
+        const cached = (await cache.match(request)) || (await cache.match(cacheKey));
+
         if (cached) {
           // Revalidate in background
           fetch(request).then(resp => {
             if (resp && resp.status === 200) {
-              caches.open(CACHE_NAME).then(c => c.put(request, resp));
+              cache.put(request, resp.clone());
             }
           }).catch(() => {});
           return cached;
         }
+
         return fetch(request).then(resp => {
           if (resp && resp.status === 200) {
-            caches.open(CACHE_NAME).then(c => c.put(request, resp.clone()));
+            cache.put(request, resp.clone());
           }
           return resp;
-        });
+        }).catch(() => offlineFallback(request));
       })
     );
     return;
@@ -91,16 +151,17 @@ self.addEventListener('fetch', (event) => {
 
   // 3. Stale-while-revalidate for everything else
   event.respondWith(
-    caches.open(CACHE_NAME).then(async cache => {
+    caches.open(CACHE_NAME).then(async (cache) => {
       const cached = await cache.match(request);
       const networkPromise = fetch(request).then(resp => {
         if (resp && resp.status === 200 && resp.type === 'basic') {
           cache.put(request, resp.clone());
         }
         return resp;
-      }).catch(() => cached);
+      }).catch(() => null);
 
-      return cached ?? networkPromise;
+      const networkResp = await networkPromise;
+      return cached || networkResp || offlineFallback(request);
     })
   );
 });

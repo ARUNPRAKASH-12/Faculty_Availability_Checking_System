@@ -72,6 +72,7 @@ let realtimeChannel = null;
 let dashboardReady  = false;
 let lastUpdateTime  = null;    // epoch ms of last faculty_locations write
 let timeCounterTimer = null;   // setInterval reference
+let facultyRoleCache = { ids: null, loadedAt: 0 };
 
 // ====================================================================
 //  HELPERS — UI
@@ -90,6 +91,47 @@ function isSecureOriginForGeolocation() {
     || location.hostname === 'localhost'
     || location.hostname === '127.0.0.1'
     || location.hostname === '::1';
+}
+
+function normalizeRole(role) {
+  return String(role || '').toLowerCase() === 'faculty' ? 'faculty' : 'student';
+}
+
+function getSessionProfileFallback() {
+  const meta = currentUser?.user_metadata || {};
+  const role = normalizeRole(meta.role);
+  const name = String(meta.name || '').trim() || String(currentUser?.email || 'User');
+  const department = String(meta.department || '').trim();
+  return { name, department, role };
+}
+
+async function getFacultyIds(force = false) {
+  const ttlMs = 60000;
+  const age = Date.now() - facultyRoleCache.loadedAt;
+  if (!force && facultyRoleCache.ids && age < ttlMs) return facultyRoleCache.ids;
+
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('role', 'faculty');
+    if (error) {
+      console.warn('[roles] could not fetch faculty ids:', error.message);
+      return null;
+    }
+    const ids = new Set((data || []).map(r => r.id).filter(Boolean));
+    facultyRoleCache = { ids, loadedAt: Date.now() };
+    return ids;
+  } catch (err) {
+    console.warn('[roles] network error while fetching faculty ids:', err?.message || err);
+    return null;
+  }
+}
+
+async function shouldDisplayFacultyRow(userId) {
+  const ids = await getFacultyIds();
+  if (!ids) return true; // fallback when profiles table/network is unavailable
+  return ids.has(userId);
 }
 
 function isNativeCapacitorRuntime() {
@@ -473,7 +515,8 @@ function subscribeRealtime() {
     .on(
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'faculty_locations' },
-      ({ new: row }) => {
+      async ({ new: row }) => {
+        if (!await shouldDisplayFacultyRow(row.user_id)) return;
         console.log('[RT] INSERT', row);
         upsertMarker(row);
         showToast(`📍 ${row.name} is now on the map`, 'info', 2500);
@@ -482,7 +525,11 @@ function subscribeRealtime() {
     .on(
       'postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'faculty_locations' },
-      ({ new: row }) => {
+      async ({ new: row }) => {
+        if (!await shouldDisplayFacultyRow(row.user_id)) {
+          removeMarker(row.user_id);
+          return;
+        }
         console.log('[RT] UPDATE', row);
         upsertMarker(row);
       }
@@ -546,13 +593,20 @@ async function loadAllLocations() {
   }
 
   console.log('[loadAllLocations] got', data.length, 'rows:', data);
-  if (data.length === 0) {
+  const facultyIds = await getFacultyIds(true);
+  const visibleRows = facultyIds ? data.filter(r => facultyIds.has(r.user_id)) : data;
+
+  if (facultyIds && visibleRows.length !== data.length) {
+    console.log('[loadAllLocations] filtered non-faculty rows:', data.length - visibleRows.length);
+  }
+
+  if (visibleRows.length === 0) {
     setStatus('No faculty sharing location yet', false);
     showToast('ℹ️ No faculty are sharing their location right now', 'info', 4000);
   } else {
     Object.values(facultyStore).forEach(r => { if (r?.marker) r.marker.remove(); });
     facultyStore = {};
-    data.forEach(r => upsertMarker(r, { flash: false, updateUI: false }));
+    visibleRows.forEach(r => upsertMarker(r, { flash: false, updateUI: false }));
     updateBadgeCount();
     updateStats();
     updateFacultyList();
@@ -774,7 +828,17 @@ $('signup-form').addEventListener('submit', async (e) => {
     }
 
     // 1. Create auth user
-    const { data, error: signUpErr } = await supabase.auth.signUp({ email, password });
+    const { data, error: signUpErr } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name,
+          department: dept,
+          role: normalizeRole(role),
+        },
+      },
+    });
 
     if (signUpErr) {
       const msg = signUpErr.message.toLowerCase();
@@ -812,7 +876,7 @@ $('signup-form').addEventListener('submit', async (e) => {
         id:         userId,
         name,
         department: dept,
-        role,
+        role:       normalizeRole(role),
       });
       if (profileErr) console.warn('Profile insert error:', profileErr.message);
     }
@@ -985,113 +1049,61 @@ async function initDashboard(userId) {
   console.log('[initDashboard] profile:', profile);
 
   // ── Step 5: Apply profile to UI ──────────────────────────────────
-  if (!profile || !profile.role) {
-    // No profile or role not set — show setup panel
-    $('profile-setup-panel').classList.remove('hidden');
-    $('tracking-panel').classList.add('hidden');
-    if (profile?.name)       $('setup-name').value = profile.name;
-    if (profile?.department) $('setup-dept').value = profile.department;
-    $('user-badge').textContent = currentUser.email + ' · ❓ Unknown role';
-    const setupMsg = $('setup-msg');
-    if (profileErr?.code === '42P01') {
-      if (setupMsg) setupMsg.innerHTML =
-        '⚠️ The <b>profiles</b> table is missing.<br>' +
-        'Run the SQL setup in your Supabase dashboard first.';
-    } else if (profileErr?.code === 'TIMEOUT') {
-      if (setupMsg) setupMsg.innerHTML =
-        '⚠️ Could not load your profile (network timeout).<br>' +
-        'Check your internet connection, then reload.';
-    } else {
-      if (setupMsg) setupMsg.innerHTML =
-        '⚠️ Profile not found.<br>Fill in your details to continue.';
+  let effectiveProfile = profile;
+  if (!effectiveProfile || !effectiveProfile.role) {
+    const fallback = getSessionProfileFallback();
+    let inferredRole = fallback.role;
+
+    // For older accounts missing profile rows, infer faculty role if a live-location row exists.
+    if (inferredRole !== 'faculty') {
+      try {
+        const { data: existingLoc, error: locErr } = await supabase
+          .from('faculty_locations')
+          .select('user_id')
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (!locErr && existingLoc?.user_id) inferredRole = 'faculty';
+      } catch (_) {
+        // Ignore inference errors and keep fallback role.
+      }
     }
-    setStatus('Profile setup required — see sidebar', false);
-    return;
+
+    effectiveProfile = {
+      name:       String(profile?.name || fallback.name || currentUser.email || 'User').trim(),
+      department: String(profile?.department || fallback.department || '').trim(),
+      role:       normalizeRole(profile?.role || inferredRole),
+    };
+
+    // Auto-heal missing profile so users are never blocked after login.
+    try {
+      const { error: upsertErr } = await supabase.from('profiles').upsert({
+        id: userId,
+        name: effectiveProfile.name,
+        department: effectiveProfile.department,
+        role: effectiveProfile.role,
+      });
+      if (upsertErr) {
+        console.warn('[initDashboard] profile auto-heal failed:', upsertErr.message);
+      } else {
+        facultyRoleCache.loadedAt = 0; // force refresh of role cache
+      }
+    } catch (err) {
+      console.warn('[initDashboard] profile auto-heal network error:', err?.message || err);
+    }
   }
 
-  $('profile-setup-panel').classList.add('hidden');
-  cachedProfile = profile;
-  isFaculty     = profile.role === 'faculty';
-  const displayName = profile.name || currentUser.email;
+  cachedProfile = effectiveProfile;
+  isFaculty     = normalizeRole(effectiveProfile.role) === 'faculty';
+  const displayName = effectiveProfile.name || currentUser.email;
   const roleLbl     = isFaculty ? '👨‍🏫 Faculty' : '🎓 Student';
 
   $('user-badge').textContent = `${displayName} · ${roleLbl}`;
   $('tracking-panel').classList.toggle('hidden', !isFaculty);
   if (isFaculty) checkHttpsWarning();
 
-  console.log('[initDashboard] role:', profile.role, '| isFaculty:', isFaculty);
+  console.log('[initDashboard] role:', effectiveProfile.role, '| isFaculty:', isFaculty);
   // realtime was already subscribed in Step 3 — nothing more to do
 }
-
-// ── Profile Setup Panel — save name/dept/role then update UI immediately ────
-$('setup-save-btn').addEventListener('click', async () => {
-  const name = $('setup-name').value.trim();
-  const dept = $('setup-dept').value.trim();
-  const role = $('setup-role').value;
-  const setupMsg = $('setup-msg');
-
-  if (!name) {
-    if (setupMsg) setupMsg.innerHTML = '❌ Please enter your name.';
-    showToast('Please enter your name', 'error');
-    return;
-  }
-
-  // Reset any previous error
-  if (setupMsg) setupMsg.innerHTML = '⏳ Saving profile…';
-
-  setLoading('setup-save-btn', true);
-  let error = null;
-  try {
-    const result = await supabase.from('profiles').upsert({
-      id:         currentUser.id,
-      name,
-      department: dept,
-      role,
-    });
-    error = result.error;
-  } catch (err) {
-    error = { message: formatBackendError('save profile', err), code: 'NETWORK' };
-  } finally {
-    setLoading('setup-save-btn', false);
-  }
-
-  if (error) {
-    console.error('[Profile save] upsert error:', error);
-    const hint = (error.code === '42P01')
-      ? ' Run the Supabase setup SQL first (see README).'
-      : (error.code === '42501' || error.message.includes('policy'))
-        ? ' Row-level security blocked the save. Check your INSERT policy.'
-        : '';
-    if (setupMsg) setupMsg.innerHTML = `❌ Save failed: ${error.message}${hint}`;
-    showToast('Save failed: ' + error.message, 'error', 6000);
-    return;
-  }
-
-  console.log('[Profile save] success — role:', role, '| name:', name);
-
-  // ── Update state directly from the saved values — no extra DB round-trip ──
-  cachedProfile = { name, department: dept, role };
-  isFaculty     = (role === 'faculty');
-  const roleLbl = isFaculty ? '👨‍🏫 Faculty' : '🎓 Student';
-
-  $('user-badge').textContent = `${name} · ${roleLbl}`;
-  $('profile-setup-panel').classList.add('hidden');
-  $('tracking-panel').classList.toggle('hidden', !isFaculty);
-  if (isFaculty) checkHttpsWarning();
-
-  showToast(`✅ Profile saved! You are ${roleLbl}`, 'success', 3000);
-
-  // Scroll the newly-revealed tracking panel into view so it's obvious
-  if (isFaculty) {
-    setTimeout(() => {
-      const tp = $('tracking-panel');
-      if (tp) tp.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 150);
-  }
-
-  // Re-subscribe realtime with the updated isFaculty flag
-  subscribeRealtime();
-});
 
 // ── Logout ────────────────────────────────────────────────────────
 $('logout-btn').addEventListener('click', async () => {
@@ -1123,13 +1135,17 @@ $('logout-btn').addEventListener('click', async () => {
 // ====================================================================
 
 $('track-btn').addEventListener('click', () => {
+  if (!isFaculty) {
+    showToast('Only faculty can share live location.', 'warning', 3500);
+    return;
+  }
   if (isTracking) stopTracking();
   else void startTracking();
 });
 
 /** Change availability status immediately without stopping tracking */
 $('availability-select').addEventListener('change', async () => {
-  if (!isTracking || !currentUser) return;
+  if (!isFaculty || !isTracking || !currentUser) return;
   // Re-use the last known coordinates from myMarker
   if (!myMarker) return;
   const { lat, lng } = myMarker.getLatLng();
@@ -1138,6 +1154,11 @@ $('availability-select').addEventListener('change', async () => {
 });
 
 async function startTracking() {
+  if (!isFaculty) {
+    showToast('Only faculty accounts can share live location.', 'warning', 3500);
+    return;
+  }
+
   const nativeGeo = isNativeCapacitorRuntime() ? getNativeGeolocationPlugin() : null;
   const hasWebGeolocation = !!navigator.geolocation;
 
@@ -1341,6 +1362,10 @@ function onGPSError(err) {
  */
 async function pushLocation(coords, status) {
   if (!currentUser) { console.warn('[pushLocation] no currentUser'); return null; }
+  if (!isFaculty) {
+    console.warn('[pushLocation] blocked because current user is not faculty');
+    return null;
+  }
 
   // Must have coordinates to save a meaningful location row
   if (!hasValidCoords(coords?.latitude, coords?.longitude)) {

@@ -2,18 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#4f46e5" />
-  <meta name="description" content="Track faculty availability and real-time GPS location on campus." />
-  <title>Faculty Availability &amp; Location Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="description" content="Real-time faculty availability and GPS location tracking system for campuses." />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Faculty Tracker - Location & Availability</title>
 
-  <!-- Inline SVG favicon — eliminates the 404 for favicon.ico -->
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Ccircle cx='16' cy='13' r='5' fill='white'/%3E%3Cpath d='M16 18 C10 18 8 23 16 26 C24 23 22 18 16 18Z' fill='white'/%3E%3C/svg%3E" />
+  <!-- Inline SVG favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Ccircle cx='16' cy='13' r='5' fill='white'/%3E%3Cpath d='M16 18 C10 18 8 23 16 26 C24 23 22 18 16 18Z' fill='white'/%3E%3C/svg%3E" />
 
   <!-- PWA Manifest -->
   <link rel="manifest" href="manifest.json" />
 
   <!-- Stylesheet -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 
   <!-- Leaflet CSS (local copy — avoids Edge Tracking Prevention on IP-based URLs) -->
@@ -21,6 +25,9 @@
 
   <!-- Leaflet JS (local copy) -->
   <script src="lib/leaflet.js"></script>
+
+  <!-- Runtime config (Supabase URL/key) -->
+  <script src="app-config.js"></script>
 
   <!-- App Logic (ES Module) -->
   <script type="module" src="script.js"></script>
@@ -87,61 +94,58 @@
       <form id="login-form" class="auth-form active-form">
         <div class="input-group">
           <label for="login-email">Email Address</label>
-          <input type="email" id="login-email" placeholder="you@college.edu" autocomplete="email" required />
+          <input type="email" id="login-email" placeholder="you@college.edu" autocomplete="email" required maxlength="255" />
         </div>
         <div class="input-group">
           <label for="login-password">Password</label>
           <div class="password-wrap">
-            <input type="password" id="login-password" placeholder="Enter your password"
-              autocomplete="current-password" required />
-            <span class="toggle-pw" data-target="login-password">👁</span>
+            <input type="password" id="login-password" placeholder="Enter your password" autocomplete="current-password" required maxlength="128" />
+            <button type="button" class="toggle-pw" data-target="login-password" aria-label="Toggle password visibility">👁</button>
           </div>
         </div>
-        <button type="submit" class="btn btn-primary btn-full" id="login-btn">
-          <span class="btn-text">Login</span>
-          <span class="btn-loader hidden"></span>
+        <button type="submit" class="btn btn-primary btn-full" id="login-btn" aria-busy="false">
+          <span class="btn-text">Sign In</span>
+          <span class="btn-loader hidden">⏳</span>
         </button>
-        <p id="login-error" class="form-msg error hidden"></p>
+        <p id="login-error" class="form-msg error hidden" role="alert"></p>
       </form>
 
       <!-- SIGN UP FORM -->
       <form id="signup-form" class="auth-form hidden">
         <div class="input-group">
-          <label for="signup-name">Full Name</label>
-          <input type="text" id="signup-name" placeholder="Dr. / Prof. / Your Name"
-            autocomplete="name" required />
+          <label for="signup-name">Full Name <span class="required">*</span></label>
+          <input type="text" id="signup-name" placeholder="Dr. / Prof. / Your Name" autocomplete="name" required maxlength="100" />
         </div>
         <div class="input-group">
           <label for="signup-dept">Department</label>
-          <input type="text" id="signup-dept" placeholder="e.g. Computer Science"
-            autocomplete="organization" />
+          <input type="text" id="signup-dept" placeholder="e.g. Computer Science" autocomplete="organization" maxlength="100" />
         </div>
         <div class="input-group">
-          <label for="signup-email">Email Address</label>
-          <input type="email" id="signup-email" placeholder="you@college.edu"
-            autocomplete="email" required />
+          <label for="signup-email">Email Address <span class="required">*</span></label>
+          <input type="email" id="signup-email" placeholder="you@college.edu" autocomplete="email" required maxlength="255" />
         </div>
         <div class="input-group">
-          <label for="signup-role">Role</label>
-          <select id="signup-role">
+          <label for="signup-role">Role <span class="required">*</span></label>
+          <select id="signup-role" required>
+            <option value="">Select your role</option>
             <option value="student">🎓 Student</option>
             <option value="faculty">👨‍🏫 Faculty</option>
           </select>
         </div>
         <div class="input-group">
-          <label for="signup-password">Password</label>
+          <label for="signup-password">Password <span class="required">*</span></label>
           <div class="password-wrap">
-            <input type="password" id="signup-password" placeholder="Min. 6 characters"
-              autocomplete="new-password" required minlength="6" />
-            <span class="toggle-pw" data-target="signup-password">👁</span>
+            <input type="password" id="signup-password" placeholder="Min. 8 characters" autocomplete="new-password" required minlength="8" maxlength="128" />
+            <button type="button" class="toggle-pw" data-target="signup-password" aria-label="Toggle password visibility">👁</button>
           </div>
+          <small class="password-hint">Use letters, numbers, and symbols for security</small>
         </div>
-        <button type="submit" class="btn btn-primary btn-full" id="signup-btn">
+        <button type="submit" class="btn btn-primary btn-full" id="signup-btn" aria-busy="false">
           <span class="btn-text">Create Account</span>
-          <span class="btn-loader hidden"></span>
+          <span class="btn-loader hidden">⏳</span>
         </button>
-        <p id="signup-error"   class="form-msg error   hidden"></p>
-        <p id="signup-success" class="form-msg success hidden"></p>
+        <p id="signup-error" class="form-msg error hidden" role="alert"></p>
+        <p id="signup-success" class="form-msg success hidden" role="status"></p>
       </form>
 
     </div><!-- /auth-card -->
@@ -215,7 +219,7 @@
             <strong>⚠️ GPS needs HTTPS or localhost</strong>
             <p>Your browser blocks GPS on plain <code>http://</code> from an IP address.</p>
             <p><strong>Fix:</strong> On this PC, open the app using <code>localhost</code> instead:</p>
-            <a id="localhost-link" class="localhost-url" href="#" target="_blank">http://localhost:5500/faculty-tracker/</a>
+            <a id="localhost-link" class="localhost-url" href="#" target="_blank">http://localhost:5501/</a>
             <p style="margin-top:6px;font-size:11px;color:#92400e">
               Students on other devices can still use the IP address — they only <em>view</em> the map, they don't need GPS.
             </p>
@@ -237,30 +241,6 @@
             <span class="acc-label">GPS Accuracy</span>
             <span id="accuracy-val" class="acc-val">–</span>
           </div>
-        </div>
-
-        <!-- PROFILE SETUP PANEL (shown when profile/role is missing) -->
-        <div id="profile-setup-panel" class="profile-setup-panel hidden">
-          <p id="setup-msg" class="setup-msg">⚠️ Your profile wasn't found.<br>Set your role to continue.</p>
-          <div class="input-group compact">
-            <label for="setup-name">Your Name</label>
-            <input type="text" id="setup-name" placeholder="Dr. / Prof. / Your Name" />
-          </div>
-          <div class="input-group compact">
-            <label for="setup-dept">Department</label>
-            <input type="text" id="setup-dept" placeholder="e.g. Computer Science" />
-          </div>
-          <div class="input-group compact">
-            <label for="setup-role">I am a&hellip;</label>
-            <select id="setup-role">
-              <option value="student">🎓 Student</option>
-              <option value="faculty">👨‍🏫 Faculty</option>
-            </select>
-          </div>
-          <button id="setup-save-btn" class="btn btn-primary btn-full">
-            <span class="btn-text">Save Profile</span>
-            <span class="btn-loader hidden"></span>
-          </button>
         </div>
 
       </aside><!-- /sidebar -->
